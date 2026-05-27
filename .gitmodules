@@ -1,0 +1,3 @@
+[submodule "external/MA-CBF-VO"]
+	path = external/MA-CBF-VO
+	url = https://github.com/KTH-RPL/MA-CBF-VO.git
