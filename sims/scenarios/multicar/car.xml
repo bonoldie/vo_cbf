@@ -1,0 +1,26 @@
+<robot>
+    <body name="car" pos="0 0 .03">
+        <freejoint />
+        <!-- <light name="top light" pos="0 0 2" mode="trackcom" diffuse=".2 .2 .2" /> -->
+        <geom name="chasis" type="mesh" mesh="chasis" />
+        <geom name="front wheel" pos=".08 0 -.015" type="sphere" size=".015" condim="1" priority="1" />
+        <!-- <light name="front light" pos=".1 0 .02" dir="2 0 -1" diffuse="1 1 1" /> -->
+        <body name="left wheel" pos="-.07 .06 0" zaxis="0 1 0">
+            <joint name="left" damping="0.1" armature="0.01" />
+            <geom class="wheel" />
+            <site class="decor" size=".006 .025 .012" />
+            <site class="decor" size=".025 .006 .012" />
+        </body>
+        <body name="right wheel" pos="-.07 -.06 0" zaxis="0 1 0">
+            <joint name="right" damping="0.1" armature="0.01" />
+            <geom class="wheel" />
+            <site class="decor" size=".006 .025 .012" />
+            <site class="decor" size=".025 .006 .012" />
+        </body>
+    </body>
+
+    <actuator>
+        <velocity name="right_wheel" joint="right" ctrlrange="-20 20" />
+        <velocity name="left_wheel" joint="left" ctrlrange="-20 20" />
+    </actuator>
+</robot>

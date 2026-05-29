@@ -1,3 +1,9 @@
 [submodule "external/MA-CBF-VO"]
 	path = external/MA-CBF-VO
 	url = https://github.com/KTH-RPL/MA-CBF-VO.git
+[submodule "sims/assets/robotis_mujoco_menagerie"]
+	path = sims/assets/robotis_mujoco_menagerie
+	url = https://github.com/ROBOTIS-GIT/robotis_mujoco_menagerie.git
+[submodule "sims/assets/robotnik_mujoco"]
+	path = sims/assets/robotnik_mujoco
+	url = https://github.com/RobotnikAutomation/robotnik_mujoco.git

@@ -1,0 +1,11 @@
+absl-py==2.4.0
+etils==1.13.0
+fsspec==2026.4.0
+glfw==2.10.0
+importlib-resources==7.1.0
+mujoco==3.8.1
+numpy==2.2.6
+pyopengl==3.1.10
+scipy==1.15.3
+typing-extensions==4.15.0
+zipp==4.1.0

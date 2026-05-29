@@ -1,0 +1,3 @@
+<worldbody>
+    <geom type="plane" size="5 5 .01" material="grid"/>
+</worldbody>

@@ -1,0 +1,8 @@
+<default>
+    <default class="wheel">
+        <geom type="cylinder" size=".03 .01" rgba=".5 .5 1 1" friction="2.0 0.5 0.01" />
+    </default>
+    <default class="decor">
+        <site type="box" rgba=".5 1 .5 1" />
+    </default>
+</default>

@@ -1,0 +1,14 @@
+<asset>
+    <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3" rgb2=".2 .3 .4"/>
+    <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2"/>
+    <mesh name="chasis" scale=".01 .006 .0015"
+        vertex=" 9   2   0
+                -10  10  10
+                9  -2   0
+                10  3  -10
+                10 -3  -10
+                -8   10 -10
+                -10 -10  10
+                -8  -10 -10
+                -5   0   20"/>
+</asset>
