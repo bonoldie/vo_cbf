@@ -3,117 +3,55 @@ import csv
 import numpy as np
 import mujoco
 import mujoco.viewer
-from generate_scenarios import buildModel
 from scipy.optimize import minimize
 
+from generate_scenarios import buildModel
+from utils.scenebuilder import ObstacleType
+from utils.utils import draw_point, draw_vector,  get_2d_pose, wrap
 
-
-def add_obstacles(builder):
-    builder.add_box(
-        pos=(1, 0, 0.1),
-        size=(0.1, 0.1, 0.1)
-    )
-
-    builder.add_cylinder(
-        pos=(0, 1, 0.05),
-        radius=0.05
-    )
+obstacles = [
+    {
+        "type": ObstacleType.BOX,
+        "pos": (1, 0, 0.1),
+        "size": (0.1, 0.1, 0.1)    
+    },
+    {
+        "type": ObstacleType.CYLINDER,
+        "pos": (0, 1, 0.05),
+        "radius": 0.25   
+    }
+]
 
 m, d, bindings = buildModel([{
     "name": "car_1"
-}, {
-    "name": "car_2",
-    "pos": (0,-1,0.05)
-}], add_obstacles)
+}
+#, {
+#    "name": "car_2",
+#    "pos": (0,-1,0.05)
+#}
+], obstacles)
 
 
 left_actuator_id = bindings["car_1"]["actuators"]["left_wheel"]
 right_actuator_id = bindings["car_1"]["actuators"]["right_wheel"]
 
-# -----------------------------------------------------------------------------
-# Target
-# -----------------------------------------------------------------------------
-
+# Robot target
 target = np.array([1.0, 1.0])
 
 
-# -----------------------------------------------------------------------------
-# Params
-# -----------------------------------------------------------------------------
-
+# Robot params
 wheel_radius = 0.015
 wheel_base = 0.02
 
+# Limits
 MAX_V = 0.04
 MAX_W = 0.3
 STOP_DIST = 0.01
 
-
-# -----------------------------------------------------------------------------
-# Utils
-# -----------------------------------------------------------------------------
-
-def wrap(a):
-    return (a + np.pi) % (2 * np.pi) - np.pi
-
-
-def get_pose():
-    x, y, _= d.xpos[bindings['car_1']["bodies"]["car"]]
-
-    qw, qx, qy, qz = d.xquat[bindings['car_1']["bodies"]["car"]]
-
-    yaw = np.arctan2(
-        2.0 * (qw * qz + qx * qy),
-        1.0 - 2.0 * (qy * qy + qz * qz)
-    )
-
-    return x, y, yaw
-
-
-def Rz(v):
-    v = v/np.linalg.norm(v)
-    z = np.array([0.,0.,1.])
-    if np.allclose(v,z): return np.eye(3)
-    if np.allclose(v,-z): return np.diag([1,-1,-1])
-
-    a = np.cross(z,v); a /= np.linalg.norm(a)
-    K = np.array([[0,-a[2],a[1]],[a[2],0,-a[0]],[-a[1],a[0],0]])
-    c = np.dot(z,v); s = np.linalg.norm(np.cross(z,v))
-
-    return np.eye(3) + s*K + (1-c)*(K@K)
-
-def draw_vector(scene, start, vec, color):
-    geom = scene.geoms[scene.ngeom]
-    mujoco.mjv_initGeom(
-        geom,
-        type=mujoco.mjtGeom.mjGEOM_ARROW,
-        size=[0.005, 0.005, np.linalg.norm(vec)],
-        pos=start + [0, 0, 0.05],
-        mat=Rz(vec).flatten(),
-        rgba=color
-    )
-    scene.ngeom += 1
-
-def draw_point(scene, pos, color=(1, 0, 0, 1), size=0.01):
-
-    geom = scene.geoms[scene.ngeom]
-
-    mujoco.mjv_initGeom(
-        geom,
-        type=mujoco.mjtGeom.mjGEOM_SPHERE,
-        size=[size, 0, 0],
-        pos=pos,
-        mat=np.eye(3).flatten(),
-        rgba=color
-    )
-
-    scene.ngeom += 1
-
-# -----------------------------------------------------------------------------
 # Controller
-# -----------------------------------------------------------------------------
 DT = m.opt.timestep
 
+# Minimization problem rollouts
 def rollout(pos, yaw, v, w, dt):
     x = pos[0] + v * np.cos(yaw) * dt
     y = pos[1] + v * np.sin(yaw) * dt
@@ -128,6 +66,7 @@ def controller(pos, yaw, target):
         target[0] - pos[0]
     )
 
+    # Cost to minimize
     def cost(u):
 
         v, w = u
@@ -188,7 +127,7 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
 
     while viewer.is_running():
 
-        x, y, yaw = get_pose()
+        x, y, yaw = get_2d_pose(d, bindings["car_1"]["bodies"]["car"])
         pos = np.array([x, y])
 
         v, w, dist, yaw_err = controller(pos, yaw, target)
@@ -239,12 +178,9 @@ with mujoco.viewer.launch_passive(m, d) as viewer:
 
         step += 1
 
-
-# -----------------------------------------------------------------------------
 # Save log
-# -----------------------------------------------------------------------------
-
-with open("tb3_log.csv", "w", newline="") as f:
-    writer = csv.writer(f)
-    writer.writerow(["t", "x", "y", "yaw", "v", "w", "dist", "yaw_err"])
-    writer.writerows(log[::50])
+if False:
+    with open("tb3_log.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["t", "x", "y", "yaw", "v", "w", "dist", "yaw_err"])
+        writer.writerows(log[::50])

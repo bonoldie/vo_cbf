@@ -6,7 +6,7 @@ import mujoco.viewer
 from  utils.scenebuilder import SceneBuilder
 from  utils.robotimporter import RobotImporter, resolve_robot_ids
 
-def buildModel(cars=[{"name": "car_1", "pos": (0, -1, 0.05), "euler": (0, 0, np.pi)}], prebuild_hook = lambda x: None ):
+def buildModel(cars=[{"name": "car_1", "pos": (0, -1, 0.05), "euler": (0, 0, np.pi)}], obstacles=[],prebuild_hook = lambda x: None ):
     """
     Build the model of the scene with a given number of robots and obstacles 
     """
@@ -30,6 +30,8 @@ def buildModel(cars=[{"name": "car_1", "pos": (0, -1, 0.05), "euler": (0, 0, np.
         "scenarios/multicar/world.xml"
     ))
 
+    builder.add_obstacles(obstacles)
+
     mappings = {}
 
     for car in cars:
@@ -47,10 +49,8 @@ def buildModel(cars=[{"name": "car_1", "pos": (0, -1, 0.05), "euler": (0, 0, np.
 
         mappings[car["name"]] = robot_mapping
 
-    # Used for adding obstacles into the scene
     prebuild_hook(builder)
 
-   
     m = builder.build_model()
     d = mujoco.MjData(m)
 
@@ -58,15 +58,3 @@ def buildModel(cars=[{"name": "car_1", "pos": (0, -1, 0.05), "euler": (0, 0, np.
 
 
     return m, d, dict(ids_mappings)
-
-    # -----------------------------------------------------------------------------
-    # Actuators
-    # -----------------------------------------------------------------------------
-
-    car1_ids = resolve_robot_ids(m, car1)
-    car2_ids = resolve_robot_ids(m, car2)
-
-    left_actuator_id = car1_ids["actuators"]["left_wheel"]
-    right_actuator_id = car1_ids["actuators"]["right_wheel"]
-
-    print(car1_ids["body"]["car"])

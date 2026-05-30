@@ -78,3 +78,5 @@ coverage.xml
 .vscode/
 *.swp
 *.swo
+
+.tmp

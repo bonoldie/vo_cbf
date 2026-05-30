@@ -145,7 +145,7 @@ def resolve_robot_ids(model, robot_maps):
         return mujoco.mj_name2id(model, obj_type, name)
 
     return {
-        "body": {k: safe_id(mujoco.mjtObj.mjOBJ_BODY, v)
+        "bodies": {k: safe_id(mujoco.mjtObj.mjOBJ_BODY, v)
                  for k, v in robot_maps["body"].items()},
 
         "joints": {k: safe_id(mujoco.mjtObj.mjOBJ_JOINT, v)

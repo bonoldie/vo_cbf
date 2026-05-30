@@ -1,5 +1,12 @@
 import xml.etree.ElementTree as ET
 import mujoco
+from enum import Enum
+from pathlib import Path
+
+class ObstacleType(Enum):
+    SPHERE=0
+    BOX=1
+    CYLINDER=2
 
 
 class SceneBuilder:
@@ -11,6 +18,11 @@ class SceneBuilder:
         self.worldbody = self.root.find("worldbody")
         if self.worldbody is None:
             raise ValueError("Missing <worldbody>")
+
+        # Init temp dir
+        tmp_dir = Path(__file__).resolve().parent.parent.parent / ".tmp"
+        tmp_dir.mkdir(exist_ok=True)
+        self.built_scene_xml_path = tmp_dir / "built_scene.xml"
 
         self.counter = 0
 
@@ -33,7 +45,7 @@ class SceneBuilder:
     # obstacles
     # --------------------------------------------------
 
-    def add_box(self, pos, size=(0.05, 0.05, 0.05), rgba=(1, 0, 0, 1), mass=None):
+    def add_box(self, pos, size=(0.05, 0.05, 0.05), rgba=(1, 0, 0, 1)):
         body = ET.SubElement(
             self.worldbody,
             "body",
@@ -48,9 +60,6 @@ class SceneBuilder:
             "size": self._vec(size),
             "rgba": self._rgba(rgba),
         }
-
-        if mass is not None:
-            geom["mass"] = str(mass)
 
         ET.SubElement(body, "geom", geom)
 
@@ -100,6 +109,39 @@ class SceneBuilder:
         )
 
         return body
+
+    def add_obstacle(self, obstacle: dict):
+        """
+        Add obstacle to the scene, does validation also 
+        """
+        
+        # Obstacle definition validation
+        if "pos" not in obstacle.keys():
+            raise Exception("Obstacle must have a position")            
+
+        match obstacle["type"]:
+            case ObstacleType.SPHERE:
+                self.add_sphere(**{
+                    k: obstacle[k] for k in ("pos", "radius", "rgba") if k in obstacle
+                })
+            case ObstacleType.CYLINDER:
+                self.add_cylinder(**{
+                    k: obstacle[k] for k in ("pos", "radius", "height", "rgba") if k in obstacle
+                })
+            case ObstacleType.BOX:
+                self.add_box(**{
+                    k: obstacle[k] for k in ("pos", "size", "rgba") if k in obstacle
+                })
+            case _:
+                raise Exception("Give obstacle type not implemented")
+
+        return
+                
+
+
+    def add_obstacles(self, obstacles=[]):
+        for obstacle in obstacles:
+            self.add_obstacle(obstacle) 
 
     # --------------------------------------------------
     # include other xml fragments safely
@@ -175,7 +217,9 @@ class SceneBuilder:
     def build_model(self):
         xml = self.xml_string()
 
-        # optional debug
-        print(xml)
+        # Saving the final scene debug purposes
+        with open(self.built_scene_xml_path, "w") as f:
+            f.write(xml)
+
 
         return mujoco.MjModel.from_xml_string(xml)
