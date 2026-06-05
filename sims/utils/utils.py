@@ -17,6 +17,28 @@ def get_2d_pose(d, body_id):
 
     return x, y, yaw
 
+def get_v_w(m, d, body_id):
+
+    body_vel = np.zeros(6)
+             
+    mujoco.mj_objectVelocity(
+        m,
+        d,
+        mujoco.mjtObj.mjOBJ_BODY,
+        body_id,
+        body_vel,
+        0  # world frame
+    )
+
+    return np.linalg.norm(body_vel[3:]), np.linalg.norm(body_vel[:3])
+
+    yaw = np.arctan2(
+        2.0 * (qw * qz + qx * qy),
+        1.0 - 2.0 * (qy * qy + qz * qz)
+    )
+
+    return x, y, yaw
+
 def Rz(v):
     v = v/np.linalg.norm(v)
     z = np.array([0.,0.,1.])
@@ -41,7 +63,7 @@ def draw_vector(scene, start, vec, color):
     )
     scene.ngeom += 1
 
-def draw_point(scene, pos, color=(1, 0, 0, 1), size=0.01):
+def draw_sphere(scene, pos, color=(1, 0, 0, 1), size=0.01):
     geom = scene.geoms[scene.ngeom]
 
     mujoco.mjv_initGeom(
@@ -54,3 +76,5 @@ def draw_point(scene, pos, color=(1, 0, 0, 1), size=0.01):
     )
 
     scene.ngeom += 1
+
+

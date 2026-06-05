@@ -93,7 +93,7 @@ class RobotImporter:
     # public API
     # --------------------------------------------------
 
-    def import_robot(self, model_root, path, pos=None, euler=None ):
+    def import_robot(self, model_root, path, pos=None, euler=None):
         """
         model_root = mujoco XML root (ET root)
         """
@@ -124,7 +124,7 @@ class RobotImporter:
                 actuator_root.append(a)
 
         return {
-            "body": self.map_body,
+            "bodies": self.map_body,
             "joints": self.map_joint,
             "actuators": self.map_actuator,
             "geom": self.map_geom,
@@ -146,7 +146,7 @@ def resolve_robot_ids(model, robot_maps):
 
     return {
         "bodies": {k: safe_id(mujoco.mjtObj.mjOBJ_BODY, v)
-                 for k, v in robot_maps["body"].items()},
+                 for k, v in robot_maps["bodies"].items()},
 
         "joints": {k: safe_id(mujoco.mjtObj.mjOBJ_JOINT, v)
                    for k, v in robot_maps["joints"].items()},

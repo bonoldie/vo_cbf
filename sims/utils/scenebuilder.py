@@ -10,6 +10,8 @@ class ObstacleType(Enum):
 
 
 class SceneBuilder:
+
+
     def __init__(self, base_xml_path):
         self.tree = ET.parse(base_xml_path)
         self.root = self.tree.getroot()
@@ -26,6 +28,7 @@ class SceneBuilder:
 
         self.counter = 0
 
+        self.obstacles = {}
     # --------------------------------------------------
     # helpers
     # --------------------------------------------------
@@ -45,12 +48,14 @@ class SceneBuilder:
     # obstacles
     # --------------------------------------------------
 
-    def add_box(self, pos, size=(0.05, 0.05, 0.05), rgba=(1, 0, 0, 1)):
+    def add_box(self, pos, size=(0.05, 0.05, 0.05), rgba=(1, 0, 0, 1), name_prefix="box"):
+        box_name = self._next_name(name_prefix)
+
         body = ET.SubElement(
             self.worldbody,
             "body",
             {
-                "name": self._next_name("box"),
+                "name": box_name,
                 "pos": self._vec(pos),
             },
         )
@@ -63,14 +68,16 @@ class SceneBuilder:
 
         ET.SubElement(body, "geom", geom)
 
-        return body
+        return body, box_name
 
-    def add_sphere(self, pos, radius=0.05, rgba=(0, 0, 1, 1)):
+    def add_sphere(self, pos, radius=0.05, rgba=(0, 0, 1, 1), name_prefix="sphere"):
+        sphere_name = self._next_name(name_prefix)
+
         body = ET.SubElement(
             self.worldbody,
             "body",
             {
-                "name": self._next_name("sphere"),
+                "name": sphere_name,
                 "pos": self._vec(pos),
             },
         )
@@ -85,14 +92,16 @@ class SceneBuilder:
             },
         )
 
-        return body
+        return body, sphere_name
 
-    def add_cylinder(self, pos, radius=0.05, height=0.1, rgba=(0, 1, 0, 1)):
+    def add_cylinder(self, pos, radius=0.05, height=0.1, rgba=(0, 1, 0, 1), name_prefix="cylinder"):
+        cylinder_name = self._next_name(name_prefix)
+
         body = ET.SubElement(
             self.worldbody,
             "body",
             {
-                "name": self._next_name("cylinder"),
+                "name": cylinder_name,
                 "pos": self._vec(pos),
             },
         )
@@ -108,41 +117,76 @@ class SceneBuilder:
             },
         )
 
-        return body
+        return body, cylinder_name
 
     def add_obstacle(self, obstacle: dict):
         """
-        Add obstacle to the scene, does validation also 
+        Add obstacle to the scene, does obstacle definition validation also 
         """
-        
+
         # Obstacle definition validation
         if "pos" not in obstacle.keys():
             raise Exception("Obstacle must have a position")            
 
         match obstacle["type"]:
             case ObstacleType.SPHERE:
-                self.add_sphere(**{
+                _, name = self.add_sphere(**{
                     k: obstacle[k] for k in ("pos", "radius", "rgba") if k in obstacle
                 })
+
+                self.obstacles[name] = obstacle
+                self.obstacles[name]["collision_radius"] = self._resolve_obstacle_radius(obstacle)
+
+
             case ObstacleType.CYLINDER:
-                self.add_cylinder(**{
+                _, name = self.add_cylinder(**{
                     k: obstacle[k] for k in ("pos", "radius", "height", "rgba") if k in obstacle
                 })
+
+                self.obstacles[name] = obstacle
+                self.obstacles[name]["collision_radius"] = self._resolve_obstacle_radius(obstacle)
+
             case ObstacleType.BOX:
-                self.add_box(**{
+                _, name = self.add_box(**{
                     k: obstacle[k] for k in ("pos", "size", "rgba") if k in obstacle
                 })
+
+                self.obstacles[name] = obstacle
+                self.obstacles[name]["collision_radius"] = self._resolve_obstacle_radius(obstacle)
             case _:
                 raise Exception("Give obstacle type not implemented")
 
         return
-                
-
 
     def add_obstacles(self, obstacles=[]):
         for obstacle in obstacles:
             self.add_obstacle(obstacle) 
 
+
+    def _resolve_obstacle_radius(self, obstacle):
+        """
+        Returns a scalar 'effective radius' for any obstacle type.
+        """
+        if "obstacle_radius" in obstacle:
+            return obstacle["obstacle_radius"]
+
+        match obstacle["type"]:
+            case ObstacleType.SPHERE:
+                return obstacle.get("radius", 0.05)
+
+            case ObstacleType.CYLINDER:
+                r = obstacle.get("radius", 0.05)
+                h = obstacle.get("height", 0.1)
+                return max(r, h / 2.0)
+
+            case ObstacleType.BOX:
+                size = obstacle.get("size", (0.05, 0.05, 0.05))
+                # effective radius = half diagonal
+                return (sum((s ** 2 for s in size)) ** 0.5)
+
+            case _:
+                raise Exception("Unknown obstacle type")
+        
     # --------------------------------------------------
     # include other xml fragments safely
     # --------------------------------------------------
