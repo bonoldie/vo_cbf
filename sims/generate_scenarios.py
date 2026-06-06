@@ -62,11 +62,11 @@ def buildModel(cars=[{"name": "car_1", "pos": (0, -1, 0.05), "euler": (0, 0, np.
     
     bindings = dict(ids_mappings)
 
-    def get_collision_spheres():
+    def get_collision_spheres(blacklist=[]):
         # Here get the current cars and obstacles position, velocity and acceleration, return a dict with { obstacle_name: [p: [px, py,pz], v:[vx, vy, vz]]}
         obstacles = {}
 
-        for car in cars:
+        for car in filter(lambda x : x["name"] not in blacklist, cars):
             obstacles[car["name"]] = {}
             obstacles[car["name"]]["p"] = d.xpos[
                 bindings[car["name"]]["bodies"]["car"]
@@ -88,7 +88,7 @@ def buildModel(cars=[{"name": "car_1", "pos": (0, -1, 0.05), "euler": (0, 0, np.
             # save collision radius for later computations
             obstacles[car["name"]]["collision_radius"] = car["collision_radius"]
         
-        for obstacle_name in builder.obstacles.keys():
+        for obstacle_name in filter(lambda x : x not in blacklist, builder.obstacles.keys()) :
             obstacle_body_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, obstacle_name)
 
             obstacles[obstacle_name] = {}
@@ -129,9 +129,7 @@ def format_obstacles(obstacles):
         v = list(v)
 
         lines.append(
-            f"  {name} (collision radius: {collision_radius}):\n"
-            f"    p = [{p[0]: .3f}, {p[1]: .3f}, {p[2]: .3f}]\n"
-            f"    v = [{v[0]: .3f}, {v[1]: .3f}, {v[2]: .3f}]"
+            f"  {name} (collision radius: {collision_radius:1.3f}): p = [{p[0]: .3f}, {p[1]: .3f}, {p[2]: .3f}] v = [{v[0]: .3f}, {v[1]: .3f}, {v[2]: .3f}]"
         )
 
     return "\n".join(lines)

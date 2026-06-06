@@ -19,7 +19,17 @@ from utils.utils import (
 # Scenario
 # --------------------------------------------------
 
-target = np.array([1.0, 1.0])
+target = np.array([3.0, 1.0])
+target_side = 1
+
+
+def generate_new_target():
+    global target, target_side
+    target_side *= -1
+    target = np.array([0.5 + target_side * np.random.uniform(1,1.5),  target_side * np.random.uniform(0,1)])
+    controller.set_target(target)
+
+
 
 obstacles = [
     {
@@ -65,19 +75,7 @@ car2_right = bindings["car_2"]["actuators"]["right_wheel"]
 
 DT = m.opt.timestep
 
-# --------------------------------------------------
-# MPC
-# --------------------------------------------------
 
-x0, y0, yaw0 = get_2d_pose(
-    d,
-    bindings["car_1"]["bodies"]["car"]
-)
-
-controller = SimpleMPC(
-    target=target,
-    initial_state=np.array([x0, y0, yaw0])
-)
 
 # --------------------------------------------------
 # Helper
@@ -91,6 +89,7 @@ def vw_to_wheels(v, w):
         np.clip(vl, -15, 15),
         np.clip(vr, -15, 15)
     )
+
 
 # --------------------------------------------------
 # Logging
@@ -113,10 +112,27 @@ with mujoco.viewer.launch_passive(
     step = 0
 
     # moving obstacle
-    vl2, vr2 = vw_to_wheels(0.15, 3.0)
+    vl2, vr2 = vw_to_wheels(0.05, -0.5)
 
     d.ctrl[car2_left] = vl2
     d.ctrl[car2_right] = vr2
+
+    # --------------------------------------------------
+    # MPC
+    # --------------------------------------------------
+
+    x0, y0, yaw0 = get_2d_pose(
+        d,
+        bindings["car_1"]["bodies"]["car"]
+    )
+
+    controller = SimpleMPC(
+        target=target,
+        initial_state=np.array([x0, y0, yaw0]),
+        obstacles=get_collision_spheres(['car_1'])
+    )
+
+    generate_new_target()
 
     while viewer.is_running():
 
@@ -134,6 +150,7 @@ with mujoco.viewer.launch_passive(
         )
 
         controller.update_state(x, y, yaw)
+        controller.update_obstacles(get_collision_spheres(['car_1']))
 
         # ------------------------------------------
         # Control
@@ -228,16 +245,25 @@ with mujoco.viewer.launch_passive(
             yaw_err
         ])
 
-        if step % 20 == 0:
+        if step % 40 == 0:
 
+            print(f"==============================")
+            print(f"Sim time: {step * DT}s")
             print(
                 f"[t={d.time:6.2f}] "
                 f"x={x:6.2f} "
                 f"y={y:6.2f} "
                 f"dist={dist:6.3f} "
-                f"v={v_cmd:6.3f} "
+                f"v={v_cmd:6.3f}"
                 f"w={w_cmd:6.3f}"
             )
+            print(
+                format_obstacles(get_collision_spheres())
+            )
+
+
+        if abs(dist) <= 0.05:
+            generate_new_target()
 
         step += 1
 
