@@ -3,8 +3,8 @@
 clear; clc;
 
 %% 1. Define Physical Parameters
-d = 2.0;    % Distance to the center of the obstacle (m)
-r = 1.0;    % Enlarged safety radius (Robot radius + Obstacle radius) (m)
+d = 0.8;    % Distance to the center of the obstacle (m)
+r = 0.5;    % Enlarged safety radius (Robot radius + Obstacle radius) (m)
 tau = 1.25;  % Time horizon (seconds)
 n_tune = 6; % Exponent for the Super-Hyperbola (n > 2 flattens the bottom)
 
@@ -20,7 +20,7 @@ end
 theta = asin(r / d);      
 m_vo = cot(theta);        
 y_cap = d / tau;          
-R_cap = r / tau;          
+R_cap = r / tau;   
 
 %% 3. Compute the Analytical Tangent Hyperbola (Base n=2)
 a = (d - r) / tau; 
