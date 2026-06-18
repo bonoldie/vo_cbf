@@ -49,7 +49,7 @@ m, d, bindings, get_collision_spheres = buildModel(
         {
             "name": "car_1",
             "collision_radius": 0.14,
-            "pos": (-1, -2, 0.05)
+            "pos": (-0.5, 2, 0.05)
         },
         {
             "name": "car_2",

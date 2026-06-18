@@ -7,8 +7,8 @@ from utils.fsh import FSH
 r_robot = 0.25
 r_obstacle = 0.25
 r = r_robot + r_obstacle
-tau = 2
-n = 6
+tau = 1.5
+n = 4
 
 obstacle_pos = np.array([0, 0.8])
 robot_pos = np.array([0, 0])

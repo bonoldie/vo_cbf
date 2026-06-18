@@ -7,7 +7,7 @@ class FSH:
     Fit a Super-Hyperbolic Velocity Obstacle
     """
 
-    def __init__(self, robot_radius, tau=0.5, degree=2):
+    def __init__(self, robot_radius, tau=1.5, degree=2):
 
         # Sanity check
         assert robot_radius > 0

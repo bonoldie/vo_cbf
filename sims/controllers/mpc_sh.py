@@ -39,7 +39,7 @@ class MPC_SH:
         self.sh_degree = sh_degree
 
         self.state_lock = threading.Lock()
-        self.fsh = FSH(robot_radius=self.robot_radius, degree=self.sh_degree, tau = 1.5)
+        self.fsh = FSH(robot_radius=self.robot_radius, degree=self.sh_degree, tau = 1.6)
 
         self.state = np.asarray(initial_state, dtype=float)
 
@@ -102,7 +102,7 @@ class MPC_SH:
         self.mpc = do_mpc.controller.MPC(model)
 
         self.mpc.set_param(
-            n_horizon=40,
+            n_horizon=20,
             t_step=0.15,
             state_discretization="collocation",
             store_full_solution=True,
@@ -297,7 +297,7 @@ class MPC_SH:
 
         print("[MPC] thread started")
 
-        period = 1/10  # 15 Hz
+        period = 1/5  # 15 Hz
 
         while self.running:
 
