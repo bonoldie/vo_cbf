@@ -4,13 +4,13 @@ from utils.fsh import FSH
 
 # Parameters 
 
-r_robot = 0.25
-r_obstacle = 0.25
+r_robot = 0.5
+r_obstacle = 0.5
 r = r_robot + r_obstacle
-tau = 1.5
-n = 4
+tau = 1.25
+n = 6
 
-obstacle_pos = np.array([0, 0.8])
+obstacle_pos = np.array([0, 2])
 robot_pos = np.array([0, 0])
 
 d = np.linalg.norm(obstacle_pos - robot_pos)

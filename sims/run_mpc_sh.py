@@ -22,6 +22,7 @@ from utils.utils import (
 
 target = np.array([3.0, 1.0])
 target_side = 1
+sh_degree = 6
 
 
 def generate_new_target():
@@ -129,7 +130,8 @@ with mujoco.viewer.launch_passive(
     controller = MPC_SH(
         target=target,
         initial_state=np.array([x0, y0, yaw0]),
-        obstacles=get_collision_spheres(['car_1'])
+        obstacles=get_collision_spheres(['car_1']),
+        sh_degree=sh_degree
     )
 
     generate_new_target()
@@ -219,7 +221,7 @@ with mujoco.viewer.launch_passive(
 
             if pb.show_obstacles_collision_boxes:
 
-                for obstacle in get_collision_spheres().values():
+                for obstacle_name, obstacle in get_collision_spheres(['car_1']).items():
 
                     draw_sphere(
                         scene,
@@ -227,6 +229,44 @@ with mujoco.viewer.launch_passive(
                         (0, 0, 1, 0.1),
                         obstacle["collision_radius"]
                     )
+
+                    # obs_sh_params = controller.sh_params[obstacle_name] 
+
+                    # obs_sh_params = MPC_SH.sh_params[obstacle_name]
+
+                    # a_super = obs_sh_params["a"]
+                    # b_super = obs_sh_params["b"]
+                    # n = sh_degree
+
+                    # center = np.asarray(obstacle["p"][:2])
+
+                    # y_tan = np.linspace(-b_super, b_super, 20)
+
+                    # for yt in y_tan:
+
+                    #     xh = a_super * (1 + (yt / b_super) ** n) ** (1.0 / n)
+
+                    #     # right branch
+                    #     p = center + np.array([xh, yt])
+
+                    #     draw_sphere(
+                    #         scene,
+                    #         np.array([p[0], p[1], 0.05]),
+                    #         (0, 1, 0, 1),
+                    #         0.01
+                    #     )
+
+                    #     # left branch (mirror)
+                    #     p = center + np.array([-xh, yt])
+
+                    #     draw_sphere(
+                    #         scene,
+                    #         np.array([p[0], p[1], 0.05]),
+                    #         (0, 1, 0, 1),
+                    #         0.01
+                    #     )
+
+
 
         mujoco.mj_step(m, d)
         viewer.sync()

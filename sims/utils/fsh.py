@@ -28,7 +28,7 @@ class FSH:
 
         return np.sqrt(res.fun) - r
 
-    def fit(self, obstacle_pos, obstacle_radius, robot_pos=np.array([0.0, 0.0])):
+    def fit(self, obstacle_pos, obstacle_radius, robot_pos=np.array([0.0, 0.0]), get_tangency_point=True):
 
         # distance must be scalar
         distance = np.linalg.norm(obstacle_pos - robot_pos)
@@ -61,15 +61,19 @@ class FSH:
 
         b_super = sol.root
 
-        # Tangency point 
-        def dist_sq(x):
-            y = a * (1 + (x / b_super) ** self.degree) ** (1 / self.degree)
-            return x**2 + (y - distance) ** 2
+        x_tan = 0
+        y_tan = 0
 
-        res = minimize_scalar(dist_sq, bounds=(0, r), method="bounded")
+        if get_tangency_point:
+            # Tangency point 
+            def dist_sq(x):
+                y = a * (1 + (x / b_super) ** self.degree) ** (1 / self.degree)
+                return x**2 + (y - distance) ** 2
 
-        x_tan = res.x
-        y_tan = a * (1 + (x_tan / b_super) ** self.degree) ** (1 / self.degree)
+            res = minimize_scalar(dist_sq, bounds=(0, r), method="bounded")
+
+            x_tan = res.x
+            y_tan = a * (1 + (x_tan / b_super) ** self.degree) ** (1 / self.degree)
 
         return {
             "a": a,

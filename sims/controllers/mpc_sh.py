@@ -12,11 +12,8 @@ class MPC_SH:
     """
     Velocity-controlled MPC.
 
-    State:
-        x = [x, y, yaw]
-
-    Input:
-        u = [v, w]
+    State: x = [x, y, yaw]
+    Input: u = [v, w]
     """
 
     sh_params = {
@@ -30,7 +27,8 @@ class MPC_SH:
         initial_state=np.zeros(3),
         sh_degree=4,
         obstacles=[],
-        robot_radius=0.15
+        robot_radius=0.15,
+        speed = 0.25
     ):
 
         self.target = target
@@ -102,8 +100,8 @@ class MPC_SH:
         self.mpc = do_mpc.controller.MPC(model)
 
         self.mpc.set_param(
-            n_horizon=20,
-            t_step=0.15,
+            n_horizon=5,
+            t_step = 0.2,
             state_discretization="collocation",
             store_full_solution=True,
         )
@@ -118,6 +116,11 @@ class MPC_SH:
             cos(target_heading - model.x["yaw"])
         )
 
+        vx = v*cos(yaw)
+        vy = v*sin(yaw)
+
+        v_ = vertcat(vx, vy)
+
 
         goal_dx = model.p["target_x"] - x
         goal_dy = model.p["target_y"] - y
@@ -127,27 +130,23 @@ class MPC_SH:
         goal_nx = goal_dx / goal_dist
         goal_ny = goal_dy / goal_dist
 
+        goal_n = vertcat(goal_nx, goal_ny)
 
-        vx = v*cos(yaw)
-        vy = v*sin(yaw)
-
-        v_ = vertcat(vx, vy)
-        
-        progress = vx*goal_nx + vy*goal_ny
+        v_pref = speed * goal_n
 
         # terminal cost - distance to target
-        mterm = (
-            (model.x["x"] - model.p["target_x"]) ** 2
-            + (model.x["y"] - model.p["target_y"]) ** 2
-        )
+        mterm = vertcat(0) #(
+        #    (model.x["x"] - model.p["target_x"]) ** 2
+        #    + (model.x["y"] - model.p["target_y"]) ** 2
+        # )
 
         # running cost
         lterm = (
-            mterm
-            + 0.01 * model.u["v"] ** 2
-            + 0.01 * model.u["w"] ** 2
+            mterm + norm_2(v_pref - v_)
+            # + 0.01 * model.u["v"] ** 2
+            # + 0.01 * model.u["w"] ** 2
             + 0.01 * heading_error ** 2
-            + (0.1 - progress)**2
+            # + (0.1 - progress)**2
         )
 
         self.mpc.set_objective(
@@ -156,10 +155,10 @@ class MPC_SH:
         )
 
         # penalize command changes
-        self.mpc.set_rterm(
-            v=0.50,
-            w=0.05
-        )
+        # self.mpc.set_rterm(
+        #     v=0.50,
+        #     w=0.05
+        # )
 
         # example_constraint = self.mpc.set_nl_cons("example_constraint", g, ub=0) 
 
@@ -235,8 +234,8 @@ class MPC_SH:
         # BOUNDS
         # ==========================================================
 
-        self.mpc.bounds["lower", "_u", "v"] = -0.01
-        self.mpc.bounds["upper", "_u", "v"] = 0.1
+        self.mpc.bounds["lower", "_u", "v"] = -0.3
+        self.mpc.bounds["upper", "_u", "v"] = 0.3
 
         self.mpc.bounds["lower", "_u", "w"] = -1.0
         self.mpc.bounds["upper", "_u", "w"] = 1.0
@@ -279,9 +278,10 @@ class MPC_SH:
         self.obstacles = obstacles
 
         for obstacle_name, obstacle in self.obstacles.items():
-            sh_params = self.fsh.fit(obstacle_pos=obstacle['p'][0:2], obstacle_radius=obstacle["collision_radius"],  robot_pos=self.state[0:2])
+            sh_params = self.fsh.fit(obstacle_pos=obstacle['p'][0:2], obstacle_radius=obstacle["collision_radius"],  robot_pos=self.state[0:2], get_tangency_point=False)
             self.sh_params[obstacle_name]['a'] = sh_params['a']
             self.sh_params[obstacle_name]['b'] = sh_params['b']
+    
     # ==============================================================
     # GET COMMAND
     # ==============================================================

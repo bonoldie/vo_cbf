@@ -135,10 +135,10 @@ class MPC_VO:
         )
 
         # penalize command changes
-        self.mpc.set_rterm(
-            v=0.50,
-            w=0.05
-        )
+        #self.mpc.set_rterm(
+        #    v=0.50,
+        #    w=0.05
+        #)
 
         # example_constraint = self.mpc.set_nl_cons("example_constraint", g, ub=0) 
 
@@ -214,11 +214,11 @@ class MPC_VO:
         # BOUNDS
         # ==========================================================
 
-        self.mpc.bounds["lower", "_u", "v"] = -0.01
-        self.mpc.bounds["upper", "_u", "v"] = 0.1
+        self.mpc.bounds["lower", "_u", "v"] = -0.1
+        self.mpc.bounds["upper", "_u", "v"] = 0.25
 
-        self.mpc.bounds["lower", "_u", "w"] = -1.0
-        self.mpc.bounds["upper", "_u", "w"] = 1.0
+        self.mpc.bounds["lower", "_u", "w"] = -30.0
+        self.mpc.bounds["upper", "_u", "w"] = 30.0
 
         self.mpc.setup()
 

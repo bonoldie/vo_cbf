@@ -3,10 +3,10 @@
 clear; clc;
 
 %% 1. Define Physical Parameters
-d = 0.8;    % Distance to the center of the obstacle (m)
-r = 0.5;    % Enlarged safety radius (Robot radius + Obstacle radius) (m)
-tau = 3;  % Time horizon (seconds)
-n_tune = 4; % Exponent for the Super-Hyperbola (n > 2 flattens the bottom)
+d = 2;    % Distance to the center of the obstacle (m)
+r = 1;    % Enlarged safety radius (Robot radius + Obstacle radius) (m)
+tau = 1.25;  % Time horizon (seconds)
+n_tune = 6; % Exponent for the Super-Hyperbola (n > 2 flattens the bottom)
 
 % Physical constraints checks
 if d <= r
