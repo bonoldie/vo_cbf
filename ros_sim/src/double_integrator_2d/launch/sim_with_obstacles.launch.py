@@ -71,13 +71,34 @@ def generate_launch_description():
                     "obs_circle_1",
                     "obs_line_1",
                 ],
-                "dt": 0.02,
+
+                "dt": 0.1,
+
                 "target_x": 4.0,
                 "target_y": 0.0,
-                "max_accel": 2.0,
-                "target_tolerance": 0.05,
+
+                "max_accel": 0.5,
+                "target_tolerance": 0.005,
+
                 "kp_position": 1.5,
                 "kd_velocity": 1.2,
+
+                "mpc_horizon": 10,
+                "mpc_dt": 0.1,
+
+                "robot_radius": 0.15,
+                "obstacle_radius_default": 0.25,
+                "safety_margin": 0.15,
+
+                "q_position": 8.0,
+                "q_terminal": 25.0,
+                "q_velocity": 0.3,
+                "r_acceleration": 0.08,
+                "r_acceleration_smooth": 0.15,
+                "q_obstacle_soft": 10.0,
+
+                "nlopt_maxeval": 120,
+                "nlopt_xtol_rel": 1e-3,
             }
         ],
     )

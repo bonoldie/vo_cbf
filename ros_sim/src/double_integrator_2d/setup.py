@@ -8,7 +8,7 @@ package_name = "double_integrator_2d"
 
 setup(
     name=package_name,
-    version="0.0.0",
+    version="1.0.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         (
@@ -39,7 +39,7 @@ setup(
         "console_scripts": [
             "sim = double_integrator_2d.sim_node:main",
             "obstacles = double_integrator_2d.obstacles_node:main",
-            "controller = double_integrator_2d.controller_node:main",
+            "controller = double_integrator_2d.controller_node:main"
         ],
     },
 )

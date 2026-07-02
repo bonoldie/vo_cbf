@@ -14,6 +14,9 @@ from visualization_msgs.msg import Marker
 from tf2_ros import Buffer, TransformListener, TransformBroadcaster
 from tf2_ros import TransformException
 
+import numpy as np
+import nlopt
+
 
 class ControllerNode(Node):
     def __init__(self):
@@ -41,8 +44,28 @@ class ControllerNode(Node):
         self.declare_parameter("target_x", 4.0)
         self.declare_parameter("target_y", 0.0)
 
-        self.declare_parameter("max_accel", 2.0)
-        self.declare_parameter("target_tolerance", 0.05)
+        self.declare_parameter("max_accel", 0.5)
+        self.declare_parameter("target_tolerance", 0.005)
+
+        # -------------------------------------------------
+        # MPC / NLopt parameters
+        # -------------------------------------------------
+        self.declare_parameter("mpc_horizon", 10)
+        self.declare_parameter("mpc_dt", 0.10)
+
+        self.declare_parameter("robot_radius", 0.15)
+        self.declare_parameter("obstacle_radius_default", 0.25)
+        self.declare_parameter("safety_margin", 0.15)
+
+        self.declare_parameter("q_position", 8.0)
+        self.declare_parameter("q_terminal", 25.0)
+        self.declare_parameter("q_velocity", 0.3)
+        self.declare_parameter("r_acceleration", 0.08)
+        self.declare_parameter("r_acceleration_smooth", 0.15)
+        self.declare_parameter("q_obstacle_soft", 10.0)
+
+        self.declare_parameter("nlopt_maxeval", 120)
+        self.declare_parameter("nlopt_xtol_rel", 1e-3)
 
         # Simple PD stub gains
         self.declare_parameter("kp_position", 1.5)
@@ -68,6 +91,30 @@ class ControllerNode(Node):
 
         self.kp_position = float(self.get_parameter("kp_position").value)
         self.kd_velocity = float(self.get_parameter("kd_velocity").value)
+
+        # MPC parameters
+        self.mpc_horizon = int(self.get_parameter("mpc_horizon").value)
+        self.mpc_dt = float(self.get_parameter("mpc_dt").value)
+
+        self.robot_radius = float(self.get_parameter("robot_radius").value)
+        self.obstacle_radius_default = float(
+            self.get_parameter("obstacle_radius_default").value
+        )
+        self.safety_margin = float(self.get_parameter("safety_margin").value)
+
+        self.q_position = float(self.get_parameter("q_position").value)
+        self.q_terminal = float(self.get_parameter("q_terminal").value)
+        self.q_velocity = float(self.get_parameter("q_velocity").value)
+        self.r_acceleration = float(self.get_parameter("r_acceleration").value)
+        self.r_acceleration_smooth = float(
+            self.get_parameter("r_acceleration_smooth").value
+        )
+        self.q_obstacle_soft = float(self.get_parameter("q_obstacle_soft").value)
+
+        self.nlopt_maxeval = int(self.get_parameter("nlopt_maxeval").value)
+        self.nlopt_xtol_rel = float(self.get_parameter("nlopt_xtol_rel").value)
+
+        self.previous_solution = None
 
         # -------------------------------------------------
         # Robot state
@@ -285,40 +332,174 @@ class ControllerNode(Node):
     # Control stub
     # -------------------------------------------------
 
-    def compute_command(self, robot, obstacles, target):
+    def obstacle_constraint(self, u, grad, robot, obstacle, k):
         """
-        Stub controller.
+        Hard nonlinear obstacle constraint for one obstacle at one horizon step.
 
-        Inputs:
-            robot:
+        NLopt requires:
+            g(u) <= 0
+
+        We impose:
+            distance(robot_k, obstacle_k) >= safety_radius
+
+        Therefore:
+            safety_radius^2 - distance^2 <= 0
+        """
+
+        predicted_states = self.rollout_dynamics(robot, u)
+
+        robot_state_k = predicted_states[k]
+
+        px = robot_state_k["position"][0]
+        py = robot_state_k["position"][1]
+
+        ox, oy = self.predict_obstacle_position(obstacle, k)
+
+        dx = px - ox
+        dy = py - oy
+
+        distance_sq = dx * dx + dy * dy
+
+        safety_radius = (
+            self.robot_radius
+            + self.obstacle_radius_default
+            + self.safety_margin
+        )
+
+        return safety_radius * safety_radius - distance_sq
+
+    def predict_obstacle_position(self, obstacle, k):
+        """
+        Predict obstacle position k steps into the horizon.
+
+        Since the controller reads obstacle position and velocity from TF,
+        this uses a constant-velocity prediction.
+        """
+
+        ox, oy = obstacle["position"]
+        ovx, ovy = obstacle["velocity"]
+
+        t = (k + 1) * self.mpc_dt
+
+        pred_x = ox + ovx * t
+        pred_y = oy + ovy * t
+
+        return pred_x, pred_y
+
+    def rollout_dynamics(self, robot, u):
+        """
+        Predict robot states over the MPC horizon using the same 2D double-integrator model.
+        """
+
+        px, py = robot["position"]
+        vx, vy = robot["velocity"]
+
+        N = self.mpc_horizon
+        dt = self.mpc_dt
+
+        states = []
+
+        for k in range(N):
+            ax = float(u[2 * k])
+            ay = float(u[2 * k + 1])
+
+            vx = vx + ax * dt
+            vy = vy + ay * dt
+
+            px = px + vx * dt
+            py = py + vy * dt
+
+            states.append(
                 {
                     "position": [px, py],
                     "velocity": [vx, vy],
-                    "yaw": yaw,
-                    "stamp": ...
                 }
+            )
 
-            obstacles:
-                [
-                    {
-                        "name": "obs_circle_1",
-                        "position": [ox, oy],
-                        "velocity": [ovx, ovy],
-                        "frame_id": "obs_circle_1"
-                    },
-                    ...
-                ]
+        return states
 
-            target:
-                {
-                    "position": [tx, ty],
-                    "frame_id": "odom"
-                }
+    def mpc_objective(self, u, grad, robot, obstacles, target):
+        """
+        Objective minimized by NLopt.
 
-        Output:
-            ax, ay
+        This is derivative-free because we use LN_COBYLA.
+        Therefore grad is ignored.
+        """
 
-        Replace this function with MPC, CBF-QP, VO, MPPI, etc.
+        predicted_states = self.rollout_dynamics(robot, u)
+
+        tx, ty = target["position"]
+
+        cost = 0.0
+
+        previous_ax = 0.0
+        previous_ay = 0.0
+
+        for k, state in enumerate(predicted_states):
+            px = state["position"][0]
+            py = state["position"][1]
+            vx = state["velocity"][0]
+            vy = state["velocity"][1]
+
+            ax = u[2 * k]
+            ay = u[2 * k + 1]
+
+            ex = tx - px
+            ey = ty - py
+
+            dist_to_target_sq = ex * ex + ey * ey
+            speed_sq = vx * vx + vy * vy
+            accel_sq = ax * ax + ay * ay
+
+            if k == len(predicted_states) - 1:
+                cost += self.q_terminal * dist_to_target_sq
+            else:
+                cost += self.q_position * dist_to_target_sq
+
+            cost += self.q_velocity * speed_sq
+            cost += self.r_acceleration * accel_sq
+
+            dax = ax - previous_ax
+            day = ay - previous_ay
+
+            cost += self.r_acceleration_smooth * (dax * dax + day * day)
+
+            previous_ax = ax
+            previous_ay = ay
+
+            # Soft obstacle penalty.
+            # The hard constraints already enforce clearance if feasible.
+            # This term helps the optimizer prefer larger clearance.
+            for obs in obstacles:
+                ox, oy = self.predict_obstacle_position(obs, k)
+
+                dx = px - ox
+                dy = py - oy
+
+                dist = math.hypot(dx, dy)
+
+                safety_radius = (
+                    self.robot_radius
+                    + self.obstacle_radius_default
+                    + self.safety_margin
+                )
+
+                influence_radius = safety_radius + 0.8
+
+                if dist < influence_radius:
+                    violation = influence_radius - dist
+                    cost += self.q_obstacle_soft * violation * violation
+
+        return float(cost)
+
+    def compute_command(self, robot, obstacles, target):
+        """
+        MPC-like obstacle-avoidance controller using NLopt.
+
+        Decision variable:
+            u = [ax0, ay0, ax1, ay1, ..., axN-1, ayN-1]
+
+        It optimizes an acceleration sequence and applies only the first input.
         """
 
         px, py = robot["position"]
@@ -326,48 +507,110 @@ class ControllerNode(Node):
 
         tx, ty = target["position"]
 
-        ex = tx - px
-        ey = ty - py
-
-        distance_to_target = math.hypot(ex, ey)
-        speed = math.hypot(vx, vy)
-
-        # Stop when close enough.
-        if distance_to_target < self.target_tolerance and speed < 0.05:
-            return 0.0, 0.0
+        N = self.mpc_horizon
+        dt = self.mpc_dt
+        n_vars = 2 * N
 
         # -------------------------------------------------
-        # Simple PD point stabilizer:
-        #
-        # a = kp * (p_target - p_robot) - kd * v_robot
-        #
-        # This ignores obstacles for now.
-        # Obstacles are already passed here so you can replace
-        # this block with CBF/VO/MPC constraints.
+        # Initial guess
         # -------------------------------------------------
+        if self.previous_solution is not None and len(self.previous_solution) == n_vars:
+            u0 = np.roll(self.previous_solution, -2)
+            u0[-2:] = 0.0
+        else:
+            # Start from simple PD acceleration repeated over the horizon.
+            ex = tx - px
+            ey = ty - py
 
-        ax = self.kp_position * ex - self.kd_velocity * vx
-        ay = self.kp_position * ey - self.kd_velocity * vy
+            ax0 = self.kp_position * ex - self.kd_velocity * vx
+            ay0 = self.kp_position * ey - self.kd_velocity * vy
 
-        # Example place-holder for future obstacle logic:
+            ax0, ay0 = self.limit_acceleration(ax0, ay0)
+
+            u0 = np.zeros(n_vars)
+            for k in range(N):
+                u0[2 * k] = ax0
+                u0[2 * k + 1] = ay0
+
+        u0 = np.clip(u0, -self.max_accel, self.max_accel)
+
+        # -------------------------------------------------
+        # NLopt optimizer
+        # -------------------------------------------------
+        opt = nlopt.opt(nlopt.LN_COBYLA, n_vars)
+
+        lower_bounds = -self.max_accel * np.ones(n_vars)
+        upper_bounds = self.max_accel * np.ones(n_vars)
+
+        opt.set_lower_bounds(lower_bounds)
+        opt.set_upper_bounds(upper_bounds)
+
+        opt.set_min_objective(
+            lambda u, grad: self.mpc_objective(
+                u,
+                grad,
+                robot,
+                obstacles,
+                target,
+            )
+        )
+
+        # -------------------------------------------------
+        # Hard obstacle constraints
         #
-        # for obs in obstacles:
-        #     ox, oy = obs["position"]
-        #     ovx, ovy = obs["velocity"]
+        # NLopt inequality convention:
+        #     g(u) <= 0
         #
-        #     relative_position = [ox - px, oy - py]
-        #     relative_velocity = [ovx - vx, ovy - vy]
+        # We want:
+        #     distance^2 >= safety_radius^2
         #
-        #     Use these for:
-        #       - velocity obstacles
-        #       - CBF constraints
-        #       - MPC obstacle constraints
-        #       - MPPI costs
+        # Therefore:
+        #     safety_radius^2 - distance^2 <= 0
+        # -------------------------------------------------
+        for k in range(N):
+            for obs_index, obs in enumerate(obstacles):
+                opt.add_inequality_constraint(
+                    lambda u, grad, kk=k, oo=obs: self.obstacle_constraint(
+                        u,
+                        grad,
+                        robot,
+                        oo,
+                        kk,
+                    ),
+                    1e-4,
+                )
+
+        opt.set_maxeval(self.nlopt_maxeval)
+        opt.set_xtol_rel(self.nlopt_xtol_rel)
+
+        # Useful for COBYLA
+        opt.set_initial_step(0.25 * np.ones(n_vars))
+
+        # -------------------------------------------------
+        # Solve
+        # -------------------------------------------------
+        u_star = opt.optimize(u0)
+
+        result_code = opt.last_optimize_result()
+        objective_value = opt.last_optimum_value()
+
+        self.previous_solution = np.array(u_star)
+
+        ax = float(u_star[0])
+        ay = float(u_star[1])
 
         ax, ay = self.limit_acceleration(ax, ay)
 
-        return ax, ay
+        self.get_logger().info(
+            f"NLopt result={result_code}, "
+            f"cost={objective_value:.3f}, "
+            f"cmd=({ax:.3f}, {ay:.3f}), "
+            f"obstacles={len(obstacles)}",
+            throttle_duration_sec=0.5,
+        )
 
+        return ax, ay
+    
     # -------------------------------------------------
     # Publishers
     # -------------------------------------------------
