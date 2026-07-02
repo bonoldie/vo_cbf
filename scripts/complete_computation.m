@@ -23,7 +23,7 @@ obstacle_state = [x_ob; y_ob; vx_ob; vy_ob];
 syms vx vy;
 
 % velocity to check
-v_rel = [vx_ob - vx_r; vy_ob - vy_r];
+v_rel = [vx_r - vx_ob; vy_r - vy_ob];
 
 vx_rel = v_rel(1);
 vy_rel = v_rel(2);
@@ -32,7 +32,7 @@ vy_rel = v_rel(2);
 
 syms R tau n real;
 
-d = sqrt((x_r - x_ob)^2 + (y_r - y_ob)^2); % distance between the obstacle and the 
+d = sqrt((x_ob - x_r)^2 + (y_ob - y_r)^2); % distance between the obstacle and the 
 a = (d - R) / tau;
 
 % these two symbols are the tangency coordinates
@@ -71,7 +71,6 @@ h = a * (1 + (vx_rel / b)^n)^(1/n) - vy_rel;
 dh_dx_r = simplify(gradient(h, [x_r]));
 dh_dx_r = simplify(subs(dh_dx_r,[diff(vy_t(x_r, y_r), x_r)], [dvy_t_dx_r_sol.dvy_t_dx_r]));
 
-
 dh_dy_r = simplify(gradient(h, [y_r]));
 dh_dy_r = simplify(subs(dh_dy_r,[diff(vy_t(x_r, y_r), y_r)], [dvy_t_dy_r_sol.dvy_t_dy_r]));
 
@@ -88,10 +87,21 @@ U_cbf = simplify(U_cbf);
 
 %% Example
 
-robot_state1 = [0; 1; 0; 0];
+robot_state1 = [0; 0; 0; 0];
 robot_r = 0.2;
 
-obstacle_state1 = [1; 2; 0; 0];
+obstacle_state1 = [1; 0; 0; 0];
 obstacle_r = 0.2;
 
-U_cbf1 = subs(U_cbf, [n; tau; R; alpha; x_r; y_r; vx_r; vy_r; x_ob; y_ob; vx_ob; vy_ob], [4; 1.5; robot_r + obstacle_r;  1.2; robot_state1; obstacle_state1]);
+d_val = double(subs(d, [x_r; y_r; x_ob; y_ob], [robot_state1(1);robot_state1(2);obstacle_state1(1);obstacle_state1(2)]));
+R_val = robot_r + obstacle_r;
+tau_val = 1.2;
+n_val = 4;
+
+sh_out = SHVO(d_val, R_val, tau_val, n_val);
+
+alpha_val = 1;
+
+U_cbf1 = subs(U_cbf, [vy_t], [sh_out.superHyperbola.y_tan_super]);
+U_cbf2 = subs(U_cbf1, [tau; R; alpha; n], [tau_val;R_val; alpha_val;n_val]);
+U_cbf3 = subs(U_cbf2, [x_r; y_r; vx_r; vy_r; x_ob; y_ob; vx_ob; vy_ob], [robot_state1; obstacle_state1]);
