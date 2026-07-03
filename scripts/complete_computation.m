@@ -82,26 +82,43 @@ grad_h_T = [dh_dx_r, dh_dy_r, dh_dvx_r, dh_dvy_r];
 % Computing gradient condition on CBF
 syms alpha real;
 
-U_cbf = grad_h_T*F + grad_h_T*G*u + alpha * h;
+% Warning! The inputs have to be rotated to align with the relative
+% velocity frame
+
+p_robot = system_state(1:2);
+p_obstacle = obstacle_state(1:2);
+
+e_y = p_obstacle - p_robot;
+e_y = e_y / (norm(e_y) + 1e-9);
+e_x = [e_y(2); -e_y(1)];
+
+R_world_to_local = [e_x, e_y];
+
+u_aligned =  R_world_to_local * u;
+
+U_cbf = grad_h_T*F + grad_h_T*G*u_aligned + alpha * h;
 U_cbf = simplify(U_cbf);
 
 %% Example
 
-robot_state1 = [0; 0; 0; 0];
-robot_r = 0.2;
+robot_state1 = [0.0; 0.5; 1.0; 0.03];
+robot_r = 0.5;
 
-obstacle_state1 = [1; 0; 0; 0];
-obstacle_r = 0.2;
+obstacle_state1 = [2.0; 0.0; 0.3; -0.19];
+obstacle_r = 0.5;
 
 d_val = double(subs(d, [x_r; y_r; x_ob; y_ob], [robot_state1(1);robot_state1(2);obstacle_state1(1);obstacle_state1(2)]));
 R_val = robot_r + obstacle_r;
-tau_val = 1.2;
-n_val = 4;
+tau_val = 1.25;
+n_val = 6;
+u_val = [1.0; 5.0];
 
 sh_out = SHVO(d_val, R_val, tau_val, n_val);
 
-alpha_val = 1;
+alpha_val = 2;
 
 U_cbf1 = subs(U_cbf, [vy_t], [sh_out.superHyperbola.y_tan_super]);
 U_cbf2 = subs(U_cbf1, [tau; R; alpha; n], [tau_val;R_val; alpha_val;n_val]);
 U_cbf3 = subs(U_cbf2, [x_r; y_r; vx_r; vy_r; x_ob; y_ob; vx_ob; vy_ob], [robot_state1; obstacle_state1]);
+
+U_cbf_final = subs(U_cbf3, u, u_val);

@@ -39,8 +39,7 @@ setup(
         "console_scripts": [
             "sim = double_integrator_2d.sim_node:main",
             "obstacles = double_integrator_2d.obstacles_node:main",
-            "controller = double_integrator_2d.controller_node:main",
-            "cbf_controller = double_integrator_2d.cbf_controller_node:main"
+            "controller = double_integrator_2d.controller_node:main"
         ],
     },
 )
