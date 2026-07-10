@@ -2,31 +2,6 @@ import numpy as np
 from sh_cbf_core import *
 import matplotlib.pyplot as plt
 
-def world_to_obstacle_aligned_frame(robot_state, obstacle_state):
-    """
-    Returns R such that:
-
-        v_local = R @ v_world
-
-    local y-axis points from robot to obstacle.
-    local x-axis is perpendicular to local y-axis.
-    """
-
-    p_robot = robot_state[:2]
-    p_obstacle = obstacle_state[:2]
-
-    # local +y axis in world coordinates: robot -> obstacle
-    e_y = p_obstacle - p_robot
-    e_y = e_y / (jnp.linalg.norm(e_y) + 1e-9)
-
-    # local +x axis in world coordinates
-    # This is +90 deg rotated from e_y depending on convention
-    e_x = jnp.array([e_y[1], -e_y[0]])
-
-    # Rows are local basis vectors expressed in world frame
-    R_world_to_local = jnp.stack([e_x, e_y], axis=0)
-
-    return R_world_to_local
 
 @jax.jit
 def class_K_function(h, gamma=1.0 , beta = 1.0):
@@ -35,14 +10,14 @@ def class_K_function(h, gamma=1.0 , beta = 1.0):
 
 def main(): 
     # State: [x, y, vx, vy]
-    robot_state = jnp.array([0.5, -0.0, 1.0, -0.5])
-    obstacle_state = jnp.array([2.0, 2.0, 0.2, -0.2])
+    robot_state = jnp.array([0.5, 0.0, 0.0, 0.0])
+    obstacle_state = jnp.array([2.0, 0.0, 0.0, 0.0])
 
-    robot_radius = 0.5
-    obstacle_radius = 0.5
+    robot_radius = 0.2
+    obstacle_radius = 0.2
 
-    tau = 1.25
-    n=6
+    tau = 1.5
+    n = 6
 
     a = compute_sh_a(robot_state, obstacle_state, robot_radius, obstacle_radius, tau)
     b = compute_sh_b(robot_state, obstacle_state, robot_radius, obstacle_radius, n, tau)
@@ -64,7 +39,7 @@ def main():
     gradH = jax.grad(h_as_function_of_robot_state)
 
     # plant EQ
-    u = jnp.array((0.0, 0.0))
+    u = jnp.array((10.0, 0.0))
     
     A = jnp.array(((0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)))
     G = jnp.array(((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
@@ -81,11 +56,11 @@ def main():
         obstacle_state,
     )
 
-    u_local = R_world_to_local @ u
+    u_local = u # R_world_to_local @ u
 
     print(f"u_local: {u_local}")
     
-    h_val = class_K_function(h_as_function_of_robot_state(robot_state))
+    h_val = class_K_function(h_as_function_of_robot_state(robot_state), gamma=1.0, beta=0)
     U_cbf = gradH(robot_state) @ A @ robot_state +  gradH(robot_state) @ G @ u_local + h_val
 
     print(f"U_cbf: {U_cbf}")
@@ -118,13 +93,14 @@ def main():
 
     def compute_u_cbf_for_u_world(u_world):
         # Inputs must be expressed in the same rotated frame as relative velocities
-        u_local = R_world_to_local @ u_world
-
+        # u_local = R_world_to_local @ u_world
+        u_local = u_world
         return (
             grad_h @ A @ robot_state
             + grad_h @ G @ u_local
             + h_val
         )
+
 
     # Vectorize over all sampled inputs
     U_cbf_vals = jax.vmap(compute_u_cbf_for_u_world)(U_world_grid)

@@ -8,6 +8,32 @@ from jax import config
 config.update("jax_enable_x64", True)
 
 
+def world_to_obstacle_aligned_frame(robot_state, obstacle_state):
+    """
+    Returns R such that:
+
+        v_local = R @ v_world
+
+    local y-axis points from robot to obstacle.
+    local x-axis is perpendicular to local y-axis.
+    """
+
+    p_robot = robot_state[:2]
+    p_obstacle = obstacle_state[:2]
+
+    # local +y axis in world coordinates: robot -> obstacle
+    e_y = p_obstacle - p_robot
+    e_y = e_y / (jnp.linalg.norm(e_y) + 1e-9)
+
+    # local +x axis in world coordinates
+    # This is +90 deg rotated from e_y depending on convention
+    e_x = jnp.array([e_y[1], -e_y[0]])
+
+    # Rows are local basis vectors expressed in world frame
+    R_world_to_local = jnp.stack([e_x, e_y], axis=0)
+
+    return R_world_to_local
+
 @jax.jit
 def compute_sh_a(
     robot_state: jnp.ndarray,
@@ -159,5 +185,9 @@ def compute_candidate_h(
 
     vrel = robot_state[2:] - obstacle_state[2:]
 
-    return a * (1 + (vrel[0]/b)**n)**(1/n) - vrel[1]
+    R_world_to_local = world_to_obstacle_aligned_frame(robot_state=robot_state, obstacle_state=obstacle_state)
+
+    vrel_local = R_world_to_local @ vrel
+
+    return a * (1 + (vrel_local[0]/b)**n)**(1/n) - vrel_local[1]
 
