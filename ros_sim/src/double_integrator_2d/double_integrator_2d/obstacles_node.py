@@ -10,6 +10,9 @@ from geometry_msgs.msg import TransformStamped, Point
 from visualization_msgs.msg import Marker, MarkerArray
 from tf2_ros import TransformBroadcaster
 
+from interfaces.srv import GetObstacles
+from interfaces.msg import Obstacle
+
 
 class ObstaclesNode(Node):
     def __init__(self):
@@ -58,8 +61,8 @@ class ObstaclesNode(Node):
                 "kind": "fixed",
                 "radius": 0.25,
                 "position": [3.0, -0.8],
-            },
-            {
+            }
+            ,{
                 "name": "obs_circle_1",
                 "kind": "moving",
                 "trajectory": "circle",
@@ -96,12 +99,39 @@ class ObstaclesNode(Node):
             10,
         )
 
+        self.service = self.create_service(
+            GetObstacles,
+            "get_obstacles",
+            self.get_obstacles_callback,
+        )
+
         self.tf_broadcaster = TransformBroadcaster(self)
 
         self.timer = self.create_timer(self.dt, self.update)
 
         self.get_logger().info("Obstacles node started.")
         self.get_logger().info("Publishing /obstacle_markers and obstacle TF frames.")
+        self.get_logger().info("A list of the obstacles is available by calling the /get_obstacles service.")
+
+
+    def get_obstacles_callback(self, request: GetObstacles.Request, response: GetObstacles.Response) -> GetObstacles.Response:
+
+        for obs in self.obstacles:
+            msg = Obstacle()
+            coords = (
+                obs.get("position")
+                or obs.get("center")
+                or obs.get("p0")
+            )
+
+            msg.name = obs["name"]
+            msg.dimensions = len(coords) if coords is not None else 0
+            msg.kind = obs["kind"]
+            msg.radius = obs["radius"]
+
+            response.obstacles.append(msg)
+        return response
+
 
     def update(self):
         now = self.get_clock().now()

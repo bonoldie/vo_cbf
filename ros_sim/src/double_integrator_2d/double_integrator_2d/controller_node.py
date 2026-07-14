@@ -17,102 +17,124 @@ from tf2_ros import TransformException
 import numpy as np
 import nlopt
 
+from interfaces.srv import GetObstacles
+from scipy.interpolate import CubicHermiteSpline
+from .sh_cbf_core import *
 
 class ControllerNode(Node):
-    def __init__(self):
-        super().__init__("controller_node")
+
+    def test(self): 
+        # State: [x, y, vx, vy]
+        robot_state = jnp.array([0.5, 0.0, 0.0, 0.0])
+        obstacle_state = jnp.array([2.0, 2.0, 0.0, 0.0])
+
+        robot_radius = 0.2
+        obstacle_radius = 0.2
+
+        tau = 1.5
+        n = 6
+
+        def h_as_function_of_robot_state(x):
+            return compute_candidate_h(
+                x,
+                obstacle_state,
+                robot_radius,
+                obstacle_radius,
+                n,
+                tau,
+            )
+                
+        gradH = jax.grad(h_as_function_of_robot_state)
+
+        # plant EQ
+        u = jnp.array((10.0, 0.0))
+        
+        A = jnp.array(((0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)))
+        G = jnp.array(((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+
+        print(f"A: {A}")
+        print(f"G: {G}")
+        print(f"gradH(robot_state): {gradH(robot_state)}")
+
+        u_local = u # R_world_to_local @ u
+
+        print(f"u_local: {u_local}")
+        
+        h_val = class_K_function(h_as_function_of_robot_state(robot_state), gamma=1.0, beta=0)
+        U_cbf = gradH(robot_state) @ A @ robot_state +  gradH(robot_state) @ G @ u_local + h_val
+
+        print(f"U_cbf: {U_cbf}")
+
+
+    # Obstacles definition (loaded via get_obstacles srv)
+    obstacles = []
+
+    # Obstacles definition (loaded via get_obstacles srv)
+    # {"obs_name": {position: [0.0, 0.0], velocity: [0.0, 0.0], at: 1233..213.123(epoch time in seconds) }}  
+    obstacles_states = {}
+
+    def load_parameters(self):
 
         # -------------------------------------------------
         # Parameters
         # -------------------------------------------------
+
+        # Frames
         self.declare_parameter("frame_id", "odom")
-        self.declare_parameter("robot_frame_id", "base_link")
-        self.declare_parameter("target_frame_id", "target")
-
-        self.declare_parameter(
-            "obstacle_frames",
-            [
-                "obs_fixed_1",
-                "obs_fixed_2",
-                "obs_circle_1",
-                "obs_line_1",
-            ],
-        )
-
-        self.declare_parameter("dt", 0.02)
-
-        self.declare_parameter("target_x", 4.0)
-        self.declare_parameter("target_y", 0.0)
-
-        self.declare_parameter("max_accel", 0.5)
-        self.declare_parameter("target_tolerance", 0.005)
-
-        # -------------------------------------------------
-        # MPC / NLopt parameters
-        # -------------------------------------------------
-        self.declare_parameter("mpc_horizon", 10)
-        self.declare_parameter("mpc_dt", 0.10)
-
-        self.declare_parameter("robot_radius", 0.15)
-        self.declare_parameter("obstacle_radius_default", 0.25)
-        self.declare_parameter("safety_margin", 0.15)
-
-        self.declare_parameter("q_position", 8.0)
-        self.declare_parameter("q_terminal", 25.0)
-        self.declare_parameter("q_velocity", 0.3)
-        self.declare_parameter("r_acceleration", 0.08)
-        self.declare_parameter("r_acceleration_smooth", 0.15)
-        self.declare_parameter("q_obstacle_soft", 10.0)
-
-        self.declare_parameter("nlopt_maxeval", 120)
-        self.declare_parameter("nlopt_xtol_rel", 1e-3)
-
-        # Simple PD stub gains
-        self.declare_parameter("kp_position", 1.5)
-        self.declare_parameter("kd_velocity", 1.2)
-
         self.frame_id = str(self.get_parameter("frame_id").value)
+        self.declare_parameter("robot_frame_id", "base_link")
         self.robot_frame_id = str(self.get_parameter("robot_frame_id").value)
+        self.declare_parameter("target_frame_id", "target")
         self.target_frame_id = str(self.get_parameter("target_frame_id").value)
 
-        self.obstacle_frames = list(
-            self.get_parameter("obstacle_frames").value
-        )
-
+        # Control loop period
+        self.declare_parameter("dt", 0.1)
         self.dt = float(self.get_parameter("dt").value)
 
+        # Target and tolerances
+        self.declare_parameter("target_x", 4.0)
         self.target_x = float(self.get_parameter("target_x").value)
+        self.declare_parameter("target_y", 0.0)
         self.target_y = float(self.get_parameter("target_y").value)
+        self.declare_parameter("target_tolerance", 0.005)
+        self.target_tolerance = float(self.get_parameter("target_tolerance").value)
 
+        # Constraints
+        self.declare_parameter("max_accel", 0.5)
         self.max_accel = float(self.get_parameter("max_accel").value)
-        self.target_tolerance = float(
-            self.get_parameter("target_tolerance").value
-        )
-
-        self.kp_position = float(self.get_parameter("kp_position").value)
-        self.kd_velocity = float(self.get_parameter("kd_velocity").value)
-
-        # MPC parameters
-        self.mpc_horizon = int(self.get_parameter("mpc_horizon").value)
-        self.mpc_dt = float(self.get_parameter("mpc_dt").value)
-
-        self.robot_radius = float(self.get_parameter("robot_radius").value)
-        self.obstacle_radius_default = float(
-            self.get_parameter("obstacle_radius_default").value
-        )
-        self.safety_margin = float(self.get_parameter("safety_margin").value)
-
-        self.q_position = float(self.get_parameter("q_position").value)
-        self.q_terminal = float(self.get_parameter("q_terminal").value)
-        self.q_velocity = float(self.get_parameter("q_velocity").value)
-        self.r_acceleration = float(self.get_parameter("r_acceleration").value)
-        self.r_acceleration_smooth = float(
-            self.get_parameter("r_acceleration_smooth").value
-        )
-        self.q_obstacle_soft = float(self.get_parameter("q_obstacle_soft").value)
-
+        self.declare_parameter("reference_speed", 0.5)
+        self.reference_speed = float(self.get_parameter("reference_speed").value)
+        
+        # NLopt params
+        self.declare_parameter("nlopt_maxeval", 120)
         self.nlopt_maxeval = int(self.get_parameter("nlopt_maxeval").value)
+        self.declare_parameter("nlopt_xtol_rel", 1e-3)
         self.nlopt_xtol_rel = float(self.get_parameter("nlopt_xtol_rel").value)
+
+    def load_obstacles(self): 
+        req = GetObstacles.Request()
+        self.future = self.create_client(GetObstacles, 'get_obstacles').call_async(req)
+        rclpy.spin_until_future_complete(self, self.future)
+        
+        self.obstacles = {}
+        for obstacle in self.future.result().obstacles:
+            self.obstacles[obstacle.name] = {
+                "name": obstacle.name, 
+                "kind": obstacle.kind, 
+                "dimensions": obstacle.dimensions,
+                "radius": obstacle.radius
+            }
+
+    def __init__(self):
+        super().__init__("controller_node")
+
+        self.test()
+
+        self.get_logger().info("Loading parameters.")
+        self.load_parameters()
+        self.get_logger().info("Loading obstacles.")
+        self.load_obstacles()
+
 
         self.previous_solution = None
 
@@ -223,15 +245,13 @@ class ControllerNode(Node):
             self.get_logger().warn(
                 f"Target point frame is '{msg.header.frame_id}', "
                 f"but expected '{self.frame_id}'. "
-                "For now I am using the raw coordinates."
+                "Using the raw coordinates."
             )
 
         self.target_x = msg.point.x
         self.target_y = msg.point.y
 
-        self.get_logger().info(
-            f"New target: x={self.target_x:.3f}, y={self.target_y:.3f}"
-        )
+        self.get_logger().info(f"New target: x={self.target_x:.3f}, y={self.target_y:.3f}")
 
     # -------------------------------------------------
     # Main control loop
@@ -247,17 +267,17 @@ class ControllerNode(Node):
             self.publish_zero_command()
             return
 
-        obstacles = self.read_obstacles_from_tf(now)
+        self.update_obstacles_states(now)
 
-        target = {
+        target_state = {
             "position": [self.target_x, self.target_y],
             "frame_id": self.frame_id,
         }
 
         ax, ay = self.compute_command(
-            robot=self.robot_state,
-            obstacles=obstacles,
-            target=target,
+            robot_state=self.robot_state,
+            obstacles_states=self.obstacles_states,
+            target_state=target_state,
         )
 
         self.publish_acceleration_command(ax, ay)
@@ -266,54 +286,47 @@ class ControllerNode(Node):
     # Obstacle reading
     # -------------------------------------------------
 
-    def read_obstacles_from_tf(self, now) -> List[dict]:
-        obstacles = []
+    def update_obstacles_states(self, now) -> List[dict]:
+        obstacles_states = {}
 
         now_sec = now.nanoseconds * 1e-9
 
-        for frame in self.obstacle_frames:
+        for obstacle in self.obstacles.values():
             try:
                 tf_msg = self.tf_buffer.lookup_transform(
                     self.frame_id,
-                    frame,
+                    obstacle["name"],
                     Time(),
                 )
 
                 x = tf_msg.transform.translation.x
                 y = tf_msg.transform.translation.y
 
+
                 vx, vy = self.estimate_obstacle_velocity(
-                    name=frame,
+                    name=obstacle["name"],
                     x=x,
                     y=y,
-                    now_sec=now_sec,
+                    now_sec=now_sec
                 )
 
-                obstacles.append(
-                    {
-                        "name": frame,
-                        "position": [x, y],
-                        "velocity": [vx, vy],
-                        "frame_id": frame,
-                    }
-                )
+                obstacles_states[obstacle["name"]] = {
+                    "position": [x, y],
+                    "velocity": [vx, vy],
+                    "at": now_sec
+                }
 
             except TransformException as ex:
-                self.get_logger().warn(
-                    f"Could not read TF {self.frame_id} -> {frame}: {ex}",
-                    throttle_duration_sec=1.0,
-                )
+                self.get_logger().warn(f"Could not read TF {self.frame_id} -> {obstacle['name']}: {ex}", throttle_duration_sec=1.0)
 
-        return obstacles
+        self.obstacles_states = obstacles_states
 
     def estimate_obstacle_velocity(self, name, x, y, now_sec):
-        if name not in self.previous_obstacle_positions:
-            self.previous_obstacle_positions[name] = (x, y)
-            self.previous_obstacle_times[name] = now_sec
+        if name not in self.obstacles_states.keys():
             return 0.0, 0.0
 
-        px, py = self.previous_obstacle_positions[name]
-        pt = self.previous_obstacle_times[name]
+        px, py = self.obstacles_states[name]["position"]
+        pt = self.obstacles_states[name]["at"]
 
         dt = now_sec - pt
 
@@ -322,9 +335,6 @@ class ControllerNode(Node):
 
         vx = (x - px) / dt
         vy = (y - py) / dt
-
-        self.previous_obstacle_positions[name] = (x, y)
-        self.previous_obstacle_times[name] = now_sec
 
         return vx, vy
 
@@ -492,52 +502,47 @@ class ControllerNode(Node):
 
         return float(cost)
 
-    def compute_command(self, robot, obstacles, target):
+    def qp_objective(self, u, grad, u_ref):
         """
-        MPC-like obstacle-avoidance controller using NLopt.
-
-        Decision variable:
-            u = [ax0, ay0, ax1, ay1, ..., axN-1, ayN-1]
-
-        It optimizes an acceleration sequence and applies only the first input.
+        Objective minimized by NLopt.
         """
 
-        px, py = robot["position"]
-        vx, vy = robot["velocity"]
+        cost = np.linalg.norm(u - u_ref)
 
-        tx, ty = target["position"]
+        return float(cost)
 
-        N = self.mpc_horizon
-        dt = self.mpc_dt
-        n_vars = 2 * N
+    def compute_command(self, robot_state, obstacles_states, target_state):
+        p0 = np.asarray(robot_state["position"], dtype=float)
+        v0 = np.asarray(robot_state["velocity"], dtype=float)
 
-        # -------------------------------------------------
-        # Initial guess
-        # -------------------------------------------------
-        if self.previous_solution is not None and len(self.previous_solution) == n_vars:
-            u0 = np.roll(self.previous_solution, -2)
-            u0[-2:] = 0.0
-        else:
-            # Start from simple PD acceleration repeated over the horizon.
-            ex = tx - px
-            ey = ty - py
+        pf = np.asarray(target_state["position"], dtype=float)
+        vf = np.zeros(2)
+        
+        distance = np.linalg.norm(pf - p0)
+        
+        # if np.linalg.norm(v0) < 1e-3:
+        #     return 0.0, 0.0
+        
+        T = max(
+            0.1,
+            distance / self.reference_speed
+        )
 
-            ax0 = self.kp_position * ex - self.kd_velocity * vx
-            ay0 = self.kp_position * ey - self.kd_velocity * vy
+         # Time knots
+        times = np.array([0.0, T])
 
-            ax0, ay0 = self.limit_acceleration(ax0, ay0)
-
-            u0 = np.zeros(n_vars)
-            for k in range(N):
-                u0[2 * k] = ax0
-                u0[2 * k + 1] = ay0
-
-        u0 = np.clip(u0, -self.max_accel, self.max_accel)
-
-        # -------------------------------------------------
+        trajectory = CubicHermiteSpline(
+            times,
+            np.vstack((p0, pf)),
+            np.vstack((v0, vf)),
+            axis=0,
+        )
+                
+        u_ref = np.asarray(trajectory(0.0, nu=2), dtype=float)
+        
         # NLopt optimizer
-        # -------------------------------------------------
-        opt = nlopt.opt(nlopt.LN_COBYLA, n_vars)
+        n_vars = 2
+        opt = nlopt.opt(nlopt.LD_SLSQP, n_vars)
 
         lower_bounds = -self.max_accel * np.ones(n_vars)
         upper_bounds = self.max_accel * np.ones(n_vars)
@@ -546,55 +551,66 @@ class ControllerNode(Node):
         opt.set_upper_bounds(upper_bounds)
 
         opt.set_min_objective(
-            lambda u, grad: self.mpc_objective(
+            lambda u, grad: self.qp_objective(
                 u,
                 grad,
-                robot,
-                obstacles,
-                target,
+                u_ref
             )
         )
 
-        # -------------------------------------------------
         # Hard obstacle constraints
-        #
-        # NLopt inequality convention:
+        # recall: NLopt inequality convention:
         #     g(u) <= 0
-        #
-        # We want:
-        #     distance^2 >= safety_radius^2
-        #
-        # Therefore:
-        #     safety_radius^2 - distance^2 <= 0
-        # -------------------------------------------------
-        for k in range(N):
-            for obs_index, obs in enumerate(obstacles):
-                opt.add_inequality_constraint(
-                    lambda u, grad, kk=k, oo=obs: self.obstacle_constraint(
-                        u,
-                        grad,
-                        robot,
-                        oo,
-                        kk,
-                    ),
-                    1e-4,
+        A = jnp.array(((0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)))
+        G = jnp.array(((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+
+        # self.get_logger().info(f"{obstacles_states.values()}")
+
+        for obstacle_name, obstacle_state in obstacles_states.items():
+            p_obs = np.asarray(obstacle_state["position"], dtype=float)
+            v_obs = np.asarray(obstacle_state["velocity"], dtype=float)
+            
+            cbf_robot_state = np.concatenate((p0,v0))
+            cbf_obstacle_state = np.concatenate((p_obs,v_obs))
+            n = 6
+            tau = 1.2
+
+            def h_as_function_of_robot_state(x):
+                return compute_candidate_h(
+                    x,
+                    cbf_obstacle_state,
+                    0.25,
+                    0.25,
+                    n,
+                    tau,
                 )
+                    
+            gradH = jax.grad(h_as_function_of_robot_state)
+            h_val = class_K_function(h_as_function_of_robot_state(cbf_robot_state), gamma=1.0, beta=0)
+
+            grad_const = lambda u: - (gradH(cbf_robot_state) @ A @ cbf_robot_state +  gradH(cbf_robot_state) @ G @ u+ h_val)
+            
+            self.get_logger().debug(f"constraint val for u_ref({u_ref}): {grad_const(u_ref)}")
+
+            opt.add_inequality_constraint(
+                lambda u, grad: - grad_const(u),
+                1e-4,
+            )
 
         opt.set_maxeval(self.nlopt_maxeval)
         opt.set_xtol_rel(self.nlopt_xtol_rel)
-
-        # Useful for COBYLA
-        opt.set_initial_step(0.25 * np.ones(n_vars))
+        # opt.set_initial_step(0.25 * np.ones(n_vars))
 
         # -------------------------------------------------
         # Solve
         # -------------------------------------------------
-        u_star = opt.optimize(u0)
+        initial_guess = np.clip(u_ref, lower_bounds,  upper_bounds)
+        u_star = opt.optimize(initial_guess)
 
         result_code = opt.last_optimize_result()
         objective_value = opt.last_optimum_value()
 
-        self.previous_solution = np.array(u_star)
+        # self.previous_solution = np.array(u_star)
 
         ax = float(u_star[0])
         ay = float(u_star[1])
@@ -604,9 +620,8 @@ class ControllerNode(Node):
         self.get_logger().info(
             f"NLopt result={result_code}, "
             f"cost={objective_value:.3f}, "
-            f"cmd=({ax:.3f}, {ay:.3f}), "
-            f"obstacles={len(obstacles)}",
-            throttle_duration_sec=0.5,
+            f"cmd=({ax:.3f}, {ay:.3f})", #f"obstacles={len(obstacles)}",
+            throttle_duration_sec=0.5
         )
 
         return ax, ay
