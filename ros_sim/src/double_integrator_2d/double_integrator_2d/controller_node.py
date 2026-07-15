@@ -52,18 +52,18 @@ class ControllerNode(Node):
         A = jnp.array(((0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)))
         G = jnp.array(((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
 
-        print(f"A: {A}")
-        print(f"G: {G}")
-        print(f"gradH(robot_state): {gradH(robot_state)}")
+        #print(f"A: {A}")
+        #print(f"G: {G}")
+        #print(f"gradH(robot_state): {gradH(robot_state)}")
 
         u_local = u # R_world_to_local @ u
 
-        print(f"u_local: {u_local}")
+        #print(f"u_local: {u_local}")
         
         h_val = class_K_function(h_as_function_of_robot_state(robot_state), gamma=1.0, beta=0)
         U_cbf = gradH(robot_state) @ A @ robot_state +  gradH(robot_state) @ G @ u_local + h_val
 
-        print(f"U_cbf: {U_cbf}")
+        # print(f"U_cbf: {U_cbf}")
 
 
     # Obstacles definition (loaded via get_obstacles srv)
@@ -520,7 +520,7 @@ class ControllerNode(Node):
         
         distance = np.linalg.norm(pf - p0)
         
-        # if np.linalg.norm(v0) < 1e-3:
+        # if np.linalg.norm(v0) < 1e-3 and distance < self.target_tolerance:
         #     return 0.0, 0.0
         
         T = max(
@@ -542,7 +542,7 @@ class ControllerNode(Node):
         
         # NLopt optimizer
         n_vars = 2
-        opt = nlopt.opt(nlopt.LD_SLSQP, n_vars)
+        opt = nlopt.opt(nlopt.LN_COBYLA, n_vars)
 
         lower_bounds = -self.max_accel * np.ones(n_vars)
         upper_bounds = self.max_accel * np.ones(n_vars)
@@ -570,6 +570,9 @@ class ControllerNode(Node):
             p_obs = np.asarray(obstacle_state["position"], dtype=float)
             v_obs = np.asarray(obstacle_state["velocity"], dtype=float)
             
+            if np.linalg.norm(p0 - p_obs) <= (0.25 + 0.25):
+               continue
+
             cbf_robot_state = np.concatenate((p0,v0))
             cbf_obstacle_state = np.concatenate((p_obs,v_obs))
             n = 6
@@ -586,16 +589,19 @@ class ControllerNode(Node):
                 )
                     
             gradH = jax.grad(h_as_function_of_robot_state)
-            h_val = class_K_function(h_as_function_of_robot_state(cbf_robot_state), gamma=1.0, beta=0)
+            h_val = class_K_function(h_as_function_of_robot_state(cbf_robot_state), gamma=100.0, beta=0)
 
             grad_const = lambda u: - (gradH(cbf_robot_state) @ A @ cbf_robot_state +  gradH(cbf_robot_state) @ G @ u+ h_val)
             
-            self.get_logger().debug(f"constraint val for u_ref({u_ref}): {grad_const(u_ref)}")
+            self.get_logger().info(
+                f"constraint obstacle {obstacle_name} for u_ref({u_ref}): {grad_const(u_ref)} <= 0"
+                #, throttle_duration_sec=0.5
+            )
 
             opt.add_inequality_constraint(
-                lambda u, grad: - grad_const(u),
+                lambda u, grad: float(grad_const(u)),
                 1e-4,
-            )
+            )   
 
         opt.set_maxeval(self.nlopt_maxeval)
         opt.set_xtol_rel(self.nlopt_xtol_rel)
@@ -620,8 +626,8 @@ class ControllerNode(Node):
         self.get_logger().info(
             f"NLopt result={result_code}, "
             f"cost={objective_value:.3f}, "
-            f"cmd=({ax:.3f}, {ay:.3f})", #f"obstacles={len(obstacles)}",
-            throttle_duration_sec=0.5
+            f"cmd=({ax:.3f}, {ay:.3f})" # ,f"obstacles={len(obstacles)}",
+            #, throttle_duration_sec=0.5
         )
 
         return ax, ay

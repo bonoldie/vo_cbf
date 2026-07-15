@@ -50,39 +50,39 @@ class ObstaclesNode(Node):
         # ----------------------------
 
         self.obstacles = [
-            {
-                "name": "obs_fixed_1",
-                "kind": "fixed",
-                "radius": 0.25,
-                "position": [2.0, 0.8],
-            },
+            # {
+            #     "name": "obs_fixed_1",
+            #     "kind": "fixed",
+            #     "radius": 0.25,
+            #     "position": [2.0, 0.8],
+            # },
             {
                 "name": "obs_fixed_2",
                 "kind": "fixed",
                 "radius": 0.25,
                 "position": [3.0, -0.8],
             }
-            ,{
-                "name": "obs_circle_1",
-                "kind": "moving",
-                "trajectory": "circle",
-                "radius": 0.25,
-                "center": [1.2, 1.4],
-                "traj_radius": 0.6,
-                "omega": 0.6,
-                "phase": 0.0,
-            },
-            {
-                "name": "obs_line_1",
-                "kind": "moving",
-                "trajectory": "line",
-                "radius": 0.25,
-                "p0": [2.5, 0.0],
-                "direction": [0.0, 1.0],
-                "amplitude": 1.0,
-                "omega": 0.8,
-                "phase": 0.0,
-            },
+            # ,{
+            #     "name": "obs_circle_1",
+            #     "kind": "moving",
+            #     "trajectory": "circle",
+            #     "radius": 0.25,
+            #     "center": [1.2, 1.4],
+            #     "traj_radius": 0.6,
+            #     "omega": 0.06,
+            #     "phase": 0.0,
+            # },
+            # {
+            #     "name": "obs_line_1",
+            #     "kind": "moving",
+            #     "trajectory": "line",
+            #     "radius": 0.25,
+            #     "p0": [2.5, 0.0],
+            #     "direction": [0.0, 1.0],
+            #     "amplitude": 1.0,
+            #     "omega": 0.08,
+            #     "phase": 0.0,
+            # },
         ]
 
         self.start_time = self.get_clock().now()

@@ -76,12 +76,12 @@ def generate_launch_description():
                 "target_tolerance": 0.005,
 
                 # Movement params
-                "max_accel": 2.0,
+                "max_accel": 0.8,
                 "reference_speed": 0.3,
 
                 # Solver options
                 "nlopt_maxeval": 120,
-                "nlopt_xtol_rel": 1e-3,
+                "nlopt_xtol_rel": 1e-8,
             }
         ],
     )

@@ -11,7 +11,7 @@ def class_K_function(h, gamma=1.0 , beta = 1.0):
 def main(): 
     # State: [x, y, vx, vy]
     robot_state = jnp.array([0.5, 0.0, 0.0, 0.0])
-    obstacle_state = jnp.array([2.0, 0.0, 0.0, 0.0])
+    obstacle_state = jnp.array([2.0, 2.0, 0.0, 0.0])
 
     robot_radius = 0.2
     obstacle_radius = 0.2
