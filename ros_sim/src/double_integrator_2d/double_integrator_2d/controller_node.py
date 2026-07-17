@@ -21,6 +21,9 @@ from interfaces.srv import GetObstacles
 from scipy.interpolate import CubicHermiteSpline
 from .sh_cbf_core import *
 
+import osqp
+import scipy.sparse as sparse
+
 class ControllerNode(Node):
 
     def test(self): 
@@ -507,11 +510,369 @@ class ControllerNode(Node):
         Objective minimized by NLopt.
         """
 
-        cost = np.linalg.norm(u - u_ref)
+        error = np.asarray(u, dtype=float) - u_ref
 
-        return float(cost)
+        if grad.size > 0:
+            grad[:] = error
+
+        return  0.5 * float(error @ error)
 
     def compute_command(self, robot_state, obstacles_states, target_state):
+        # -------------------------------------------------
+        # Current and target states
+        # -------------------------------------------------
+        p0 = np.asarray(robot_state["position"], dtype=float)
+        v0 = np.asarray(robot_state["velocity"], dtype=float)
+
+        pf = np.asarray(target_state["position"], dtype=float)
+        vf = np.zeros(2, dtype=float)
+
+        distance = np.linalg.norm(pf - p0)
+
+        # if np.linalg.norm(v0) < 1e-3 and distance < self.target_tolerance:
+        #     return 0.0, 0.0
+
+        # -------------------------------------------------
+        # Reference acceleration
+        # -------------------------------------------------
+        T = max(
+            0.1,
+            distance / self.reference_speed,
+        )
+
+        times = np.array([0.0, T], dtype=float)
+
+        trajectory = CubicHermiteSpline(
+            times,
+            np.vstack((p0, pf)),
+            np.vstack((v0, vf)),
+            axis=0,
+        )
+
+        u_ref = np.asarray(
+            trajectory(0.0, nu=2),
+            dtype=float,
+        )
+
+        n_vars = 2
+
+        acceleration_lower_bound = (
+            -self.max_accel * np.ones(n_vars, dtype=float)
+        )
+
+        acceleration_upper_bound = (
+            self.max_accel * np.ones(n_vars, dtype=float)
+        )
+
+        # -------------------------------------------------
+        # QP objective
+        #
+        # min 0.5 * ||u - u_ref||²
+        #
+        # OSQP form:
+        #
+        # min 0.5 * u.T @ P @ u + q.T @ u
+        #
+        # therefore:
+        #
+        # P = I
+        # q = -u_ref
+        #
+        # The constant 0.5 * u_ref.T @ u_ref is omitted.
+        # -------------------------------------------------
+        P = sparse.eye(
+            n_vars,
+            format="csc",
+            dtype=float,
+        )
+
+        q = -u_ref
+
+        # -------------------------------------------------
+        # Double-integrator dynamics
+        #
+        # x_dot = F x + G u
+        # -------------------------------------------------
+        F = jnp.array(
+            (
+                (0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+                (0.0, 0.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0, 0.0),
+            )
+        )
+
+        G = jnp.array(
+            (
+                (0.0, 0.0),
+                (0.0, 0.0),
+                (1.0, 0.0),
+                (0.0, 1.0),
+            )
+        )
+
+        cbf_robot_state = jnp.asarray(
+            np.concatenate((p0, v0)),
+            dtype=float,
+        )
+
+        # -------------------------------------------------
+        # OSQP constraints
+        #
+        # l <= A_qp @ u <= upper
+        #
+        # First two rows impose acceleration bounds:
+        #
+        # -max_accel <= u <= max_accel
+        # -------------------------------------------------
+        constraint_rows = [
+            np.array([1.0, 0.0], dtype=float),
+            np.array([0.0, 1.0], dtype=float),
+        ]
+
+        constraint_lower_bounds = [
+            acceleration_lower_bound[0],
+            acceleration_lower_bound[1],
+        ]
+
+        constraint_upper_bounds = [
+            acceleration_upper_bound[0],
+            acceleration_upper_bound[1],
+        ]
+
+        self.get_logger().info(
+            f"Received obstacles_states: "
+            f"type={type(obstacles_states).__name__}, "
+            f"count={len(obstacles_states)}, "
+            f"keys={list(obstacles_states.keys())}"
+        )
+
+        active_constraints = 0
+
+        # -------------------------------------------------
+        # CBF constraints
+        # -------------------------------------------------
+        for obstacle_name, obstacle_state in obstacles_states.items():
+            self.get_logger().info(
+                f"Preparing constraint for obstacle {obstacle_name}"
+            )
+
+            p_obs = np.asarray(
+                obstacle_state["position"],
+                dtype=float,
+            )
+
+            v_obs = np.asarray(
+                obstacle_state["velocity"],
+                dtype=float,
+            )
+
+            obstacle_distance = np.linalg.norm(p0 - p_obs)
+
+            # This preserves your existing behavior.
+            #
+            # WARNING:
+            # skipping the constraint when already close to an obstacle
+            # may be unsafe. Consider removing this condition.
+            if obstacle_distance <= 0.5:
+                self.get_logger().warning(
+                    f"Skipping {obstacle_name}: "
+                    f"distance={obstacle_distance:.3f}"
+                )
+                continue
+
+            cbf_obstacle_state = jnp.asarray(
+                np.concatenate((p_obs, v_obs)),
+                dtype=float,
+            )
+
+            n = 6
+            tau = 1.2
+
+            def h_as_function_of_robot_state(
+                x,
+                obstacle_state=cbf_obstacle_state,
+                n_i=n,
+                tau_i=tau,
+            ):
+                return compute_candidate_h(
+                    x,
+                    obstacle_state,
+                    0.25,
+                    0.25,
+                    n_i,
+                    tau_i,
+                )
+
+            h_value = h_as_function_of_robot_state(
+                cbf_robot_state
+            )
+
+            grad_h = jax.grad(
+                h_as_function_of_robot_state
+            )(cbf_robot_state)
+
+            class_k = class_K_function(
+                h_value,
+                gamma=100.0,
+                beta=0,
+            )
+
+            # -------------------------------------------------
+            # Original constraint:
+            #
+            # -(grad_h F x + grad_h G u + class_k) <= 0
+            #
+            # Equivalent CBF form:
+            #
+            # grad_h G u >= -(grad_h F x + class_k)
+            #
+            # OSQP representation:
+            #
+            # lower_i <= control_row @ u <= +inf
+            # -------------------------------------------------
+            control_row = np.asarray(
+                grad_h @ G,
+                dtype=float,
+            ).reshape(n_vars)
+
+            drift_and_class_k = float(
+                grad_h @ F @ cbf_robot_state
+                + class_k
+            )
+
+            cbf_lower_bound = -drift_and_class_k
+
+            constraint_rows.append(control_row)
+            constraint_lower_bounds.append(cbf_lower_bound)
+            constraint_upper_bounds.append(np.inf)
+
+            active_constraints += 1
+
+            cbf_at_reference = (
+                drift_and_class_k
+                + control_row @ u_ref
+            )
+
+            self.get_logger().info(
+                f"ob {obstacle_name} "
+                f"(pos={p_obs}, vel={v_obs}) "
+                f"h={float(h_value):.6f}, "
+                f"CBF(u_ref)={cbf_at_reference:.6f} >= 0, "
+                f"row={control_row}, "
+                f"lower={cbf_lower_bound:.6f}"
+            )
+
+        # -------------------------------------------------
+        # Assemble OSQP matrices
+        # -------------------------------------------------
+        A_qp = sparse.csc_matrix(
+            np.vstack(constraint_rows),
+            dtype=float,
+        )
+
+        lower = np.asarray(
+            constraint_lower_bounds,
+            dtype=float,
+        )
+
+        upper = np.asarray(
+            constraint_upper_bounds,
+            dtype=float,
+        )
+
+        # -------------------------------------------------
+        # Setup and solve
+        # -------------------------------------------------
+        solver = osqp.OSQP()
+
+        solver.setup(
+            P=P,
+            q=q,
+            A=A_qp,
+            l=lower,
+            u=upper,
+            verbose=False,
+            eps_abs=1e-5,
+            eps_rel=1e-5,
+            max_iter=self.nlopt_maxeval,
+        )
+
+        # Since a new solver is created every control iteration,
+        # manually provide the previous solution as a warm start.
+        previous_solution = getattr(
+            self,
+            "previous_solution",
+            None,
+        )
+
+        if previous_solution is not None:
+            previous_solution = np.asarray(
+                previous_solution,
+                dtype=float,
+            )
+
+            if previous_solution.shape == (n_vars,):
+                solver.warm_start(
+                    x=np.clip(
+                        previous_solution,
+                        acceleration_lower_bound,
+                        acceleration_upper_bound,
+                    )
+                )
+
+        results = solver.solve()
+
+        status = results.info.status.lower()
+
+        if (
+            results.x is not None
+            and status.startswith("solved")
+        ):
+            u_star = np.asarray(
+                results.x,
+                dtype=float,
+            )
+
+            self.previous_solution = u_star.copy()
+
+        else:
+            # This fallback is not guaranteed to satisfy the CBF constraints.
+            u_star = np.clip(
+                np.zeros(2),#u_ref,
+                acceleration_lower_bound,
+                acceleration_upper_bound,
+            )
+
+            self.get_logger().error(
+                f"OSQP failed: "
+                f"status={results.info.status}, "
+                f"status_val={results.info.status_val}"
+            )
+
+        ax = float(u_star[0])
+        ay = float(u_star[1])
+
+        # Actual tracking cost, including the omitted constant.
+        tracking_cost = 0.5 * np.dot(
+            u_star - u_ref,
+            u_star - u_ref,
+        )
+
+        self.get_logger().info(
+            f"OSQP status={results.info.status}, "
+            f"iterations={results.info.iter}, "
+            f"primal_residual={results.info.prim_res:.3e}, "
+            f"dual_residual={results.info.dual_res:.3e}, "
+            f"active_constraints={active_constraints}, "
+            f"cost={tracking_cost:.6f}, "
+            f"u_ref=({u_ref[0]:.3f}, {u_ref[1]:.3f}), "
+            f"cmd=({ax:.3f}, {ay:.3f})"
+        )
+
+        return ax, ay
+
+    def compute_command_nlopt(self, robot_state, obstacles_states, target_state):
         p0 = np.asarray(robot_state["position"], dtype=float)
         v0 = np.asarray(robot_state["velocity"], dtype=float)
 
@@ -537,12 +898,12 @@ class ControllerNode(Node):
             np.vstack((v0, vf)),
             axis=0,
         )
-                
+
         u_ref = np.asarray(trajectory(0.0, nu=2), dtype=float)
         
         # NLopt optimizer
         n_vars = 2
-        opt = nlopt.opt(nlopt.LN_COBYLA, n_vars)
+        opt = nlopt.opt(nlopt.LD_AUGLAG, n_vars)
 
         lower_bounds = -self.max_accel * np.ones(n_vars)
         upper_bounds = self.max_accel * np.ones(n_vars)
@@ -565,44 +926,114 @@ class ControllerNode(Node):
         G = jnp.array(((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
 
         # self.get_logger().info(f"{obstacles_states.values()}")
+        self.get_logger().info(
+            f"Received obstacles_states: "
+            f"type={type(obstacles_states).__name__}, "
+            f"count={len(obstacles_states)}, "
+            f"keys={list(obstacles_states.keys())}"
+        )
+
 
         for obstacle_name, obstacle_state in obstacles_states.items():
+            self.get_logger().info(
+                f"Preparing constraint for obstacle {obstacle_name}"
+            )
+
             p_obs = np.asarray(obstacle_state["position"], dtype=float)
             v_obs = np.asarray(obstacle_state["velocity"], dtype=float)
-            
-            if np.linalg.norm(p0 - p_obs) <= (0.25 + 0.25):
-               continue
 
-            cbf_robot_state = np.concatenate((p0,v0))
-            cbf_obstacle_state = np.concatenate((p_obs,v_obs))
+            if np.linalg.norm(p0 - p_obs) <= 0.5:
+                continue
+
+            cbf_robot_state = jnp.asarray(
+                np.concatenate((p0, v0)),
+                dtype=float,
+            )
+
+            cbf_obstacle_state = jnp.asarray(
+                np.concatenate((p_obs, v_obs)),
+                dtype=float,
+            )
+
             n = 6
             tau = 1.2
 
-            def h_as_function_of_robot_state(x):
+            def h_as_function_of_robot_state(
+                x,
+                obstacle_state=cbf_obstacle_state,
+                n_i=n,
+                tau_i=tau,
+            ):
                 return compute_candidate_h(
                     x,
-                    cbf_obstacle_state,
+                    obstacle_state,
                     0.25,
                     0.25,
-                    n,
-                    tau,
+                    n_i,
+                    tau_i,
                 )
-                    
-            gradH = jax.grad(h_as_function_of_robot_state)
-            h_val = class_K_function(h_as_function_of_robot_state(cbf_robot_state), gamma=100.0, beta=0)
 
-            grad_const = lambda u: - (gradH(cbf_robot_state) @ A @ cbf_robot_state +  gradH(cbf_robot_state) @ G @ u+ h_val)
-            
-            self.get_logger().info(
-                f"constraint obstacle {obstacle_name} for u_ref({u_ref}): {grad_const(u_ref)} <= 0"
-                #, throttle_duration_sec=0.5
+            gradH = jax.grad(h_as_function_of_robot_state)
+
+            class_k = class_K_function(
+                h_as_function_of_robot_state(cbf_robot_state),
+                gamma=100.0,
+                beta=0,
             )
 
+            grad_h = gradH(cbf_robot_state)
+
+            def grad_const(
+                u,
+                grad_h_i=grad_h,
+                robot_state_i=cbf_robot_state,
+                class_k_i=class_k,
+            ):
+                return -(
+                    grad_h_i @ A @ robot_state_i
+                    + grad_h_i @ G @ u
+                    + class_k_i
+                )
+
+            def gradgrad_const(
+                u,
+                grad_h_i=grad_h,
+            ):
+                return - grad_h_i @ G
+
+            self.get_logger().info(
+                f"ob {obstacle_name} "
+                f"(pos: {p_obs}, vel: {v_obs}) "
+                f"for u_ref({u_ref}): "
+                f"{float(grad_const(jnp.asarray(u_ref))):.6f} <= 0 "
+                f"({np.asarray(gradgrad_const(jnp.asarray(u_ref)))})"
+            )
+
+            def constraint(
+                u,
+                grad,
+                value_function=grad_const,
+                gradient_function=gradgrad_const,
+                obstacle_name_i=obstacle_name,
+            ):
+                u_jax = jnp.asarray(u)
+
+                value = value_function(u_jax)
+
+                if grad.size > 0:
+                    grad[:] = np.asarray(
+                        gradient_function(u_jax),
+                        dtype=float,
+                    )
+
+                return float(value)
+
             opt.add_inequality_constraint(
-                lambda u, grad: float(grad_const(u)),
-                1e-4,
+                constraint,
+                1e-6,
             )   
 
+            
         opt.set_maxeval(self.nlopt_maxeval)
         opt.set_xtol_rel(self.nlopt_xtol_rel)
         # opt.set_initial_step(0.25 * np.ones(n_vars))
@@ -611,8 +1042,13 @@ class ControllerNode(Node):
         # Solve
         # -------------------------------------------------
         initial_guess = np.clip(u_ref, lower_bounds,  upper_bounds)
-        u_star = opt.optimize(initial_guess)
-
+        u_star = np.zeros(2)
+        
+        try:
+            u_star = opt.optimize(initial_guess)
+        except Exception:
+            pass
+        
         result_code = opt.last_optimize_result()
         objective_value = opt.last_optimum_value()
 
@@ -621,7 +1057,7 @@ class ControllerNode(Node):
         ax = float(u_star[0])
         ay = float(u_star[1])
 
-        ax, ay = self.limit_acceleration(ax, ay)
+        # ax, ay = self.limit_acceleration(ax, ay)
 
         self.get_logger().info(
             f"NLopt result={result_code}, "

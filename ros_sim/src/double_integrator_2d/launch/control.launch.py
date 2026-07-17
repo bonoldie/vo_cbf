@@ -49,7 +49,7 @@ def generate_launch_description():
         parameters=[
             {
                 "frame_id": "odom",
-                "dt": 0.05,
+                "dt": 0.01,
                 "path_history_size": 500,
             }
         ],
@@ -68,10 +68,10 @@ def generate_launch_description():
                 "target_frame_id": "target",
 
                 # Control loop period 
-                "dt": 0.1,
+                "dt": 0.01,
 
                 # Target and tolerances
-                "target_x": 4.0,
+                "target_x": 6.0,
                 "target_y": 0.0,
                 "target_tolerance": 0.005,
 
@@ -80,8 +80,8 @@ def generate_launch_description():
                 "reference_speed": 0.3,
 
                 # Solver options
-                "nlopt_maxeval": 120,
-                "nlopt_xtol_rel": 1e-8,
+                "nlopt_maxeval": 200,
+                "nlopt_xtol_rel": 1e-4,
             }
         ],
     )

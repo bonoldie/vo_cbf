@@ -82,12 +82,12 @@ plot(vx, vy_vo, '--k', 'LineWidth', 1.5, 'DisplayName', 'Standard VO Cone');
 plot(cap_vx, cap_vy, '--b', 'LineWidth', 1.5, 'DisplayName', 'FVO Time Horizon (\tau) Cap');
 
 % Plot the Standard Hyperbola (n=2)
-plot(vx, vy_hyperbola_n2, '-b', 'LineWidth', 2, 'DisplayName', 'Standard Hyperbola (n=2)');
+plot(vx, vy_hyperbola_n2, '-b', 'LineWidth', 0.2, 'DisplayName', 'Standard Hyperbola (n=2)');
 plot([x_tan_n2, -x_tan_n2], [y_tan_n2, y_tan_n2], 'o', 'MarkerEdgeColor', 'b', ...
     'MarkerFaceColor', 'y', 'MarkerSize', 6, 'DisplayName', 'Tangency (n=2)');
 
 % Plot the Super-Hyperbola
-plot(vx, vy_super_hyperbola, '-g', 'LineWidth', 3, ...
+plot(vx, vy_super_hyperbola, '-g', 'LineWidth', 0.6, ...
     'DisplayName', sprintf('Proper Super-Hyperbola (n=%d)', n_tune));
 plot([x_tan_super, -x_tan_super], [y_tan_super, y_tan_super], 'o', 'MarkerEdgeColor', 'g', ...
     'MarkerFaceColor', 'y', 'MarkerSize', 8, 'DisplayName', sprintf('Tangency (n=%d)', n_tune));
