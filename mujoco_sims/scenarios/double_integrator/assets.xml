@@ -1,0 +1,16 @@
+<asset>
+    <texture
+        name="grid_texture"
+        type="2d"
+        builtin="checker"
+        rgb1="0.15 0.20 0.25"
+        rgb2="0.25 0.30 0.35"
+        width="512"
+        height="512" />
+
+    <material
+        name="grid"
+        texture="grid_texture"
+        texrepeat="10 10"
+        reflectance="0.1" />
+</asset>

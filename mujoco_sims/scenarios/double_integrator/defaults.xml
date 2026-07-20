@@ -1,0 +1,8 @@
+ <default>
+    <default class="obstacle">
+        <geom
+            type="sphere"
+            rgba="0.25 0.45 0.95 1"
+            friction="0.8 0.1 0.01" />
+    </default>
+</default>

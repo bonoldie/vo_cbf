@@ -17,6 +17,18 @@ def get_2d_pose(d, body_id):
 
     return x, y, yaw
 
+def get_3d_position(d, body_id):
+    x, y, z= d.xpos[body_id]
+
+    return x, y, z
+
+def get_3d_velocity(d, body_id):
+    _, _, _, vx, vy, vz = d.cvel[body_id]
+
+    return vx, vy, vz
+
+
+
 def get_v_w(m, d, body_id):
 
     body_vel = np.zeros(6)

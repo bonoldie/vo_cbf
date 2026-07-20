@@ -12,6 +12,8 @@ class  Playback:
     vertical_offset = 0.0
     horizontal_offset = 0.0
 
+    step = 0
+
     def __init__(self):
         listener = Listener(on_press=self.on_press, on_release=self.on_release)
         listener.start()
@@ -44,3 +46,7 @@ class  Playback:
     def on_release(self, key):
         if key == Key.ctrl:
             self.ctrl = False
+
+        if key == KeyCode.from_char('n') and self.ctrl:
+            self.step = self.step + 1
+            print(f"[Playback] requested steps: {self.step}")

@@ -1,4 +1,0 @@
-<actuator>
-    <velocity name="right_wheel" joint="right" ctrlrange="-20 20" />
-    <velocity name="left_wheel" joint="left" ctrlrange="-20 20" />
-</actuator>

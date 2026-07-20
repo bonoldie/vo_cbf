@@ -1,0 +1,12 @@
+<mujoco>
+    <compiler autolimits="true" angle="radian" />
+
+    <!-- Zero gravity produces ideal translational double-integrator dynamics. -->
+    <option timestep="0.002" gravity="0 0 0" integrator="RK4" />
+
+    <visual>
+        <headlight ambient="0.7 0.7 0.7" />
+    </visual>
+
+    <worldbody></worldbody>
+</mujoco>
