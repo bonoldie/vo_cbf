@@ -146,7 +146,6 @@ with mujoco.viewer.launch_passive(m, d, show_left_ui=False, show_right_ui=False)
             scene = viewer.user_scn
             scene.ngeom = 0
 
-
             ratio = np.linalg.norm(a_cmd) / 0.15 
 
             # acceleration command

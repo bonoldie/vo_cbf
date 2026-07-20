@@ -191,3 +191,24 @@ def compute_candidate_h(
 
     return a * (1 + (vrel_local[0]/b)**n)**(1/n) - vrel_local[1]
 
+
+@partial(jax.jit, static_argnames=("n",))
+def compute_candidate_h_3D(
+    robot_state: jnp.ndarray,
+    obstacle_state: jnp.ndarray,
+    robot_radius: float,
+    obstacle_radius: float,
+    n: int,
+    tau: float): 
+    # The 3D version should project the velocity on the plane defined by the robot position, the obstacle position and tangent to the relative velocity vec 
+
+    a = compute_sh_a(robot_state, obstacle_state, robot_radius, obstacle_radius, tau)
+    b = compute_sh_b(robot_state, obstacle_state, robot_radius, obstacle_radius, n, tau)
+
+    vrel = robot_state[3:] - obstacle_state[3:]
+
+    R_world_to_local = world_to_obstacle_aligned_frame(robot_state=robot_state, obstacle_state=obstacle_state)
+
+    vrel_local = R_world_to_local @ vrel
+
+    return a * (1 + (vrel_local[0]/b)**n)**(1/n) - vrel_local[1]

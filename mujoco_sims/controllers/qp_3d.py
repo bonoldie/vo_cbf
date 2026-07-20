@@ -255,7 +255,8 @@ class QP3D:
             dtype=float,
         )
 
-       
+        
+
         # Solver setup
         solver = osqp.OSQP()
 
