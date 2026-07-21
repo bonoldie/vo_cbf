@@ -1,9 +1,16 @@
 import osqp
 import numpy as np
 import jax.numpy as jnp
-from scipy.interpolate import BPoly, CubicHermiteSpline
+import jax
+jax.config.update("jax_enable_x64", True)
+
+from scipy.interpolate import BPoly
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
+from .sh_cbf_core import compute_candidate_h_3D, class_K_function
+
+
+
 
 class QP3D:
     """
@@ -61,12 +68,17 @@ class QP3D:
         initial_state=np.zeros(6),
         sh_n = 6,
         sh_tau = 1.2,
+        collision_radius = 0.5,
         obstacles=[],
     ):
-
+        self.step = 0
         self.target = target
         self.dt = dt
         self.state = np.asarray(initial_state, dtype=float)
+
+        self.sh_n = sh_n
+        self.sh_tau = sh_tau
+        self.collision_radius = collision_radius
 
         # commanded [ax, ay, az]
         self.cmd_accel = np.zeros(3)
@@ -160,6 +172,9 @@ class QP3D:
     def set_max_accel(self, max_accel):
         self.max_accel = max_accel
 
+    def increment_step(self):
+        self.step = self.step + 1
+
     # Accelearation reference
     def compute_acceleration_reference(self) -> np.ndarray:
         position = self.state[:3]
@@ -245,6 +260,105 @@ class QP3D:
             acceleration_upper_bound[2],
         ]
 
+        # -------------------------------------------------
+        # CBF constraints - 3D SH
+        # -------------------------------------------------
+        # Recall: obstacle structure
+        #   { obstacle_name: {collision_radius: 0.1, p: [px, py,pz], v:[vx, vy, vz]}}
+        for obstacle_name, obstacle in self.obstacles.items():
+            # print(
+            #     f"Preparing constraint for obstacle {obstacle_name}"
+            # )
+
+        #     p_obs = np.asarray(
+        #         obstacle_state["position"],
+        #         dtype=float,
+        #     )
+
+        #     v_obs = np.asarray(
+        #         obstacle_state["velocity"],
+        #         dtype=float,
+        #     )
+
+            obstacle_distance = np.linalg.norm(self.state[:3] - obstacle['p'])
+
+            # This preserves your existing behavior.
+            #
+            # WARNING:
+            # skipping the constraint when already close to an obstacle
+            # may be unsafe. Consider removing this condition.
+            if obstacle_distance <= (self.collision_radius + obstacle['collision_radius']):
+                print(
+                    f"Skipping {obstacle_name}: "
+                    f"distance={obstacle_distance:.3f}"
+                )
+                continue
+
+            cbf_obstacle_state = jnp.asarray(
+                np.concatenate((obstacle['p'], obstacle['v'])),
+                dtype=float,
+            )
+
+            def h_as_function_of_robot_state(
+                x,
+                obstacle_state=cbf_obstacle_state,
+                n_i=self.sh_n,
+                tau_i=self.sh_tau,
+            ):
+                return compute_candidate_h_3D(
+                    x,
+                    obstacle_state,
+                    self.collision_radius,
+                    obstacle['collision_radius'],
+                    n_i,
+                    tau_i,
+                )
+
+            h_value = h_as_function_of_robot_state(
+                self.state
+            )
+
+            grad_h = jax.grad(h_as_function_of_robot_state)(self.state)
+
+            class_k = class_K_function(h_value, gamma=100.0, beta=0)
+
+            # -------------------------------------------------
+            # Original constraint:
+            #
+            # -(grad_h F x + grad_h G u + class_k) <= 0
+            #
+            # Equivalent CBF form:
+            #
+            # grad_h G u >= -(grad_h F x + class_k)
+            #
+            # OSQP representation:
+            #
+            # lower_i <= control_row @ u <= +inf
+            # -------------------------------------------------
+            control_row = np.asarray(grad_h @ self.G, dtype=float).reshape(3)
+
+            drift_and_class_k = float(grad_h @ self.F @ self.state + class_k)
+
+            cbf_lower_bound = -drift_and_class_k
+
+            constraint_rows.append(control_row)
+            constraint_lower_bounds.append(cbf_lower_bound)
+            constraint_upper_bounds.append(np.inf)
+
+            active_constraints += 1
+
+            cbf_at_reference = (drift_and_class_k + control_row @ acc_ref)
+
+            if self.step % 80 == 0:
+                print(
+                    f"ob {obstacle_name} "
+                    f"(pos={obstacle['p']}, vel={obstacle['v']}) "
+                    f"h={float(h_value):.6f}, "
+                    f"CBF(u_ref)={cbf_at_reference:.6f} >= 0, "
+                    f"row={control_row}, "
+                    f"lower={cbf_lower_bound:.6f}"
+                )
+
         lower = np.asarray(
             constraint_lower_bounds,
             dtype=float,
@@ -254,8 +368,6 @@ class QP3D:
             constraint_upper_bounds,
             dtype=float,
         )
-
-        
 
         # Solver setup
         solver = osqp.OSQP()
@@ -302,7 +414,7 @@ class QP3D:
         else: 
             self.cmd_accel = np.zeros(3)
 
-        if False:
+        if self.step % 80 == 0:
             print(
                 f"OSQP status={results.info.status}, "
                 f"iterations={results.info.iter}, "

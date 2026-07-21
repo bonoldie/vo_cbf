@@ -8,6 +8,70 @@ from jax import config
 config.update("jax_enable_x64", True)
 
 
+@jax.jit
+def class_K_function(h, gamma=1.0 , beta = 1.0):
+    return gamma * h + beta * jnp.power(h,3)
+
+
+def world_to_obstacle_aligned_frame_3D(
+    robot_state: jnp.ndarray,
+    obstacle_state: jnp.ndarray,
+) -> jnp.ndarray:
+    """
+    Return a 3x3 rotation matrix R such that:
+
+        v_local = R @ v_world
+
+    Conventions:
+        - local +y points from the robot to the obstacle;
+        - local +x is perpendicular to local +y and approximately horizontal;
+        - local +z completes a right-handed coordinate frame.
+
+    The first three elements of each state are assumed to be position:
+        state[:3] = [x, y, z]
+    """
+
+    p_robot = robot_state[:3]
+    p_obstacle = obstacle_state[:3]
+
+    eps = 1e-9
+
+    # Local +y axis expressed in world coordinates.
+    direction = p_obstacle - p_robot
+    distance = jnp.linalg.norm(direction)
+
+    # The aligned frame is undefined when both positions coincide.
+    # Use world +y as a deterministic fallback.
+    e_y = jnp.where(
+        distance > eps,
+        direction / jnp.maximum(distance, eps),
+        jnp.array([0.0, 1.0, 0.0]),
+    )
+
+    world_z = jnp.array([0.0, 0.0, 1.0])
+    world_x = jnp.array([1.0, 0.0, 0.0])
+
+    # When e_y is nearly parallel to world_z, use world_x instead
+    # to avoid a near-zero cross product.
+    reference_axis = jnp.where(
+        jnp.abs(jnp.dot(e_y, world_z)) > 0.99,
+        world_x,
+        world_z,
+    )
+
+    # local +x, expressed in world coordinates
+    e_x = jnp.cross(e_y, reference_axis)
+    e_x = e_x / (jnp.linalg.norm(e_x) + eps)
+
+    # Complete the right-handed frame: e_x × e_y = e_z
+    e_z = jnp.cross(e_x, e_y)
+    e_z = e_z / (jnp.linalg.norm(e_z) + eps)
+
+    # Rows are local basis vectors expressed in world coordinates.
+    R_world_to_local = jnp.stack([e_x, e_y, e_z], axis=0)
+
+    return R_world_to_local
+
 def world_to_obstacle_aligned_frame(robot_state, obstacle_state):
     """
     Returns R such that:
@@ -199,16 +263,69 @@ def compute_candidate_h_3D(
     robot_radius: float,
     obstacle_radius: float,
     n: int,
-    tau: float): 
-    # The 3D version should project the velocity on the plane defined by the robot position, the obstacle position and tangent to the relative velocity vec 
+    tau: float,
+):
+    dtype = robot_state.dtype
+    eps = jnp.asarray(1e-6, dtype=dtype)
 
-    a = compute_sh_a(robot_state, obstacle_state, robot_radius, obstacle_radius, tau)
-    b = compute_sh_b(robot_state, obstacle_state, robot_radius, obstacle_radius, n, tau)
+    p_robot = robot_state[:3]
+    v_robot = robot_state[3:]
 
-    vrel = robot_state[3:] - obstacle_state[3:]
+    p_obstacle = obstacle_state[:3]
+    v_obstacle = obstacle_state[3:]
 
-    R_world_to_local = world_to_obstacle_aligned_frame(robot_state=robot_state, obstacle_state=obstacle_state)
+    # Robot -> obstacle direction
+    delta_p = p_obstacle - p_robot
 
-    vrel_local = R_world_to_local @ vrel
+    # Smooth norm: derivative is finite even at delta_p == 0
+    distance = jnp.sqrt(jnp.dot(delta_p, delta_p) + eps**2)
 
-    return a * (1 + (vrel_local[0]/b)**n)**(1/n) - vrel_local[1]
+    e_los = delta_p / distance
+
+    vrel = v_robot - v_obstacle
+
+    # Relative velocity along robot -> obstacle direction
+    v_parallel = jnp.dot(vrel, e_los)
+
+    # Relative velocity perpendicular to line of sight
+    v_perpendicular = vrel - v_parallel * e_los
+
+    # Smooth perpendicular speed
+    v_tangential = (
+        jnp.sqrt(
+            jnp.dot(v_perpendicular, v_perpendicular) + eps**2
+        )
+        - eps
+    )
+
+    robot_state_local = jnp.zeros((2,), dtype=dtype)
+
+    obstacle_state_local = jnp.stack(
+        (
+            jnp.asarray(0.0, dtype=dtype),
+            distance,
+        )
+    )
+
+    a = compute_sh_a(
+        robot_state_local,
+        obstacle_state_local,
+        robot_radius,
+        obstacle_radius,
+        tau,
+    )
+
+    b = compute_sh_b(
+        robot_state_local,
+        obstacle_state_local,
+        robot_radius,
+        obstacle_radius,
+        n,
+        tau,
+    )
+
+    return (
+        a
+        * (1.0 + (v_tangential / b) ** n) ** (1.0 / n)
+        - v_parallel
+    )
