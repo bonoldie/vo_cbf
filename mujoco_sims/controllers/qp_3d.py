@@ -1,4 +1,5 @@
 import osqp
+import time
 import numpy as np
 import jax.numpy as jnp
 import jax
@@ -8,7 +9,6 @@ from scipy.interpolate import BPoly
 import scipy.sparse as sparse
 import matplotlib.pyplot as plt
 from .sh_cbf_core import compute_candidate_h_3D, class_K_function
-
 
 
 
@@ -260,26 +260,14 @@ class QP3D:
             acceleration_upper_bound[2],
         ]
 
+        constraint_start_time = time.time()
+
         # -------------------------------------------------
         # CBF constraints - 3D SH
         # -------------------------------------------------
         # Recall: obstacle structure
         #   { obstacle_name: {collision_radius: 0.1, p: [px, py,pz], v:[vx, vy, vz]}}
         for obstacle_name, obstacle in self.obstacles.items():
-            # print(
-            #     f"Preparing constraint for obstacle {obstacle_name}"
-            # )
-
-        #     p_obs = np.asarray(
-        #         obstacle_state["position"],
-        #         dtype=float,
-        #     )
-
-        #     v_obs = np.asarray(
-        #         obstacle_state["velocity"],
-        #         dtype=float,
-        #     )
-
             obstacle_distance = np.linalg.norm(self.state[:3] - obstacle['p'])
 
             # This preserves your existing behavior.
@@ -359,6 +347,8 @@ class QP3D:
                     f"lower={cbf_lower_bound:.6f}"
                 )
 
+        print(f"Building constraints took {time.time() - constraint_start_time: 6.3f}s")
+
         lower = np.asarray(
             constraint_lower_bounds,
             dtype=float,
@@ -394,7 +384,7 @@ class QP3D:
             verbose=False,
             eps_abs=1e-5,
             eps_rel=1e-5,
-            max_iter=150,
+            max_iter=100
         )
 
         results = solver.solve()

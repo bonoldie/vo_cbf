@@ -5,6 +5,7 @@ import mujoco
 import mujoco.viewer
 import mediapy as media
 from pathlib import Path
+import cv2 as cv2
 
 from generate_scenarios import buildModel, format_obstacles
 from utils.playback import Playback
@@ -36,7 +37,7 @@ controller = None
 
 target_side = 1
 
-def generate_new_target(margin=1.0):
+def generate_new_target(margin=0.5):
     global target, target_side, controller, obstacles
 
     obstacle_positions = np.asarray(
@@ -134,11 +135,11 @@ def generate_obstacles(
 
 
 obstacles = generate_obstacles(
-    grid_size=(1, 1),
-    density=1,
-    cell_size=3.0,
-    z_range=(0.5, 5.0),
-    seed=43,
+    grid_size=(2, 2),
+    density=2,
+    cell_size=1,
+    z_range=(0.5, 1.5),
+    seed=44,
 )
 
 # obstacles = []
@@ -166,7 +167,6 @@ actuator_force_z = bindings["robot1"]["actuators"]["force_z"]
 
 DT = m.opt.timestep
 
-
 VIDEO_FPS = 30
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
@@ -183,10 +183,10 @@ renderer = mujoco.Renderer(
 )
 
 # camera setup
-CAMERA_DISTANCE = 10.12
-CAMERA_AZIMUTH = 118.5
-CAMERA_ELEVATION = -24.0
-CAMERA_LOOKAT = np.array([2.0, 2.0, 2.0])
+CAMERA_DISTANCE = 4.459003270
+CAMERA_AZIMUTH = 95.25
+CAMERA_ELEVATION = -42.5
+CAMERA_LOOKAT = np.array([0.56715552, 1.22202891, 0.1062733])
 
 render_camera = mujoco.MjvCamera()
 mujoco.mjv_defaultCamera(render_camera)
@@ -199,6 +199,9 @@ render_camera.lookat[:] = CAMERA_LOOKAT
 next_frame_time = float(d.time)
 frame_period = 1.0 / VIDEO_FPS
 frames = []
+
+fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+video_out = cv2.VideoWriter(VIDEO_PATH, fourcc, VIDEO_FPS, (VIDEO_WIDTH,VIDEO_HEIGHT))
 
 # ======================================================================
 # Custom visualization
@@ -213,6 +216,7 @@ def draw_custom_geometries(
 ):
     position = robot_state[:3]
     acceleration_norm = np.linalg.norm(acceleration_command)
+    speed = np.linalg.norm(robot_state[3:])
 
     # Acceleration command arrow.
     if acceleration_norm > 1e-9:
@@ -221,12 +225,24 @@ def draw_custom_geometries(
             acceleration_command / acceleration_norm
         ) * arrow_length
 
-        draw_vector(
+        velocity_arrow_start = position + (
+            robot_state[3:] / speed
+        ) * arrow_length
+
+        draw_vector(    
             scene,
             arrow_start,
             acceleration_command * 2.0,
             [1.0, 1.0, 0.0, 0.8],
         )
+
+        draw_vector(    
+            scene,
+            velocity_arrow_start,
+            robot_state[3:]  * 2.0,
+            [0.0, 1.0, 0.0, 0.8],
+        )
+
 
     # Target.
     draw_sphere(
@@ -254,161 +270,6 @@ def format_vector(vector):
         for value in vector
     )
 
-# Hide UI by default
-# with mujoco.viewer.launch_passive(m, d, show_left_ui=False, show_right_ui=False) as viewer:
-
-#     # camera setup
-#     viewer.cam.distance = 10.12
-#     viewer.cam.azimuth = 118.5
-#     viewer.cam.elevation = -24.0
-#     viewer.cam.lookat[:] = np.array([2.0, 2.0, 2.0])
-
-#     # sim setup
-#     pb = Playback()
-#     step = 0
-
-#     # Initial robot state
-#     x0, y0, z0 = get_3d_position(d, bindings["robot1"]["bodies"]["robot"])
-#     vx0, vy0, vz0 = get_3d_velocity(d, bindings["robot1"]["bodies"]["robot"])
-
-#     controller = QP3D(
-#         dt=DT,
-#         target=target,
-#         initial_state=np.array([x0, y0, z0, vx0, vy0, vz0 ]),
-#         collision_radius=collision_radius,
-#         sh_n=sh_n,
-#         sh_tau=sh_tau,
-#         obstacles=get_collision_spheres(['robot'])
-#     )
-
-#     controller.set_max_accel(max_accel)
-#     controller.set_reference_speed(ref_speed)
-
-#     # generate_new_target()
-#     controller.set_target(target)
-
-#     while viewer.is_running():
-#         step_start = time.time()
-
-#         # Playback control:
-#         #           space to start/freeze sim
-#         if pb.step > 0:
-#             pb.step = pb.step - 1 
-#         elif pb.paused:
-#             time.sleep(0.1)
-#             continue
-
-#         # Robot state
-#         x, y, z = get_3d_position(d, bindings["robot1"]["bodies"]["robot"])
-#         vx, vy, vz = get_3d_velocity(d, bindings["robot1"]["bodies"]["robot"])
-
-#         x_vec = np.array(( x, y, z, vx, vy, vz))
-
-#         controller.update_state(x_vec)
-        
-#         controller.update_obstacles(get_collision_spheres(['robot1']))
-
-#         # ------------------------------------------
-#         # Control
-#         # ------------------------------------------
-
-#         a_cmd = controller.compute_command()
-        
-#         d.ctrl[actuator_force_x] = a_cmd[0]
-#         d.ctrl[actuator_force_y] = a_cmd[1]
-#         d.ctrl[actuator_force_z] = a_cmd[2]
-
-#         # ------------------------------------------
-#         # Metrics
-#         # ------------------------------------------
-
-#         dist = np.linalg.norm(target - x_vec[:3])
-
-#         # ------------------------------------------
-#         # Visualization
-#         # ------------------------------------------
-
-#         with viewer.lock():
-
-#             scene = viewer.user_scn
-#             scene.ngeom = 0
-
-#             ratio = np.linalg.norm(a_cmd) / 0.15 
-
-#             # acceleration command
-#             draw_vector(
-#                 scene,
-#                 x_vec[:3] + a_cmd / ratio,
-#                 a_cmd * 2,
-#                 [1, 1, 0, 0.8]
-#             )
-
-#             draw_sphere(
-#                 scene,
-#                 target,
-#                 (0, 1, 0, 1),
-#                 0.06
-#             )
-
-#             if pb.show_obstacles_collision_boxes:
-
-#                 for obstacle_name, obstacle in get_collision_spheres(['robot']).items():
-#                     draw_sphere(
-#                         scene,
-#                         np.array(obstacle["p"]),
-#                         (0, 0, 1, 0.1),
-#                         obstacle["collision_radius"]
-#                     )
-
-
-#         mujoco.mj_step(m, d)
-#         viewer.sync()
-
-#         if len(frames) < d.time * framerate:
-#             print(viewer)
-#             #pixels = viewer.render()
-#             #frames.append(pixels)
-
-#         # ------------------------------------------
-#         # Logging
-#         # ------------------------------------------
-
-#         # log.append([
-#         #     d.time,
-#         #     x,
-#         #     y,
-#         #     yaw,
-#         #     v_cmd,
-#         #     w_cmd,
-#         #     dist,
-#         #     yaw_err
-#         # ])
-
-#         if step % 80 == 0:
-#             print(f"==============================")
-#             print(
-#                 f"[t={d.time:6.3f}s] "
-#                 f"state={' '.join(f'{x:6.3f}' for x in x_vec)} "
-#                 f"dist={dist:6.4f} "
-#                 f"u={' '.join(f'{a:6.4f}' for a in a_cmd)}"
-#             )
-#             print(
-#                 format_obstacles(get_collision_spheres())
-#             )
-
-#         if True:
-#             if abs(dist) <= 0.005 and np.linalg.norm(x_vec[3:]) <= 0.005:
-#                 generate_new_target()
-
-#         step += 1
-#         controller.increment_step()
-
-#         # time_until_next_step = DT - (time.time() - step_start)
-#         # if time_until_next_step > 0:
-#         #     time.sleep(time_until_next_step)
-
-# controller.stop()
-
 try:
     with mujoco.viewer.launch_passive(
         m,
@@ -432,6 +293,7 @@ try:
 
         pb = Playback()
         step = 0
+        real_start_time = time.time()
 
         x0, y0, z0 = get_3d_position(
             d,
@@ -467,7 +329,7 @@ try:
 
         controller.set_max_accel(max_accel)
         controller.set_reference_speed(ref_speed)
-        controller.set_target(target)
+        generate_new_target() # controller.set_target(target)
 
         # --------------------------------------------------------------
         # Main loop
@@ -476,6 +338,7 @@ try:
         while viewer.is_running():
             step_start = time.time()
 
+            # print(viewer.cam)
             # ----------------------------------------------------------
             # Playback control
             # ----------------------------------------------------------
@@ -588,7 +451,9 @@ try:
                 )
 
                 frame = renderer.render()
-                frames.append(frame.copy())
+                # frames.append(frame.copy())
+
+                video_out.write(frame[:, :, ::-1])
 
                 next_frame_time += frame_period
 
@@ -600,7 +465,7 @@ try:
                 print("==============================")
 
                 print(
-                    f"[t={d.time:6.3f}s] "
+                    f"[t={d.time:6.3f}s ({d.time / (time.time() - real_start_time):6.3f}x)] "
                     f"state={format_vector(robot_state)} "
                     f"dist={distance_to_target:6.4f} "
                     f"u={format_vector(acceleration_command)}"
@@ -647,28 +512,9 @@ finally:
 # Save and display video
 # ======================================================================
 
-if not frames:
-    print("No frames were recorded.")
-
-else:
+if True:
     duration = len(frames) / VIDEO_FPS
 
-    print(
-        f"Recorded {len(frames)} frames "
-        f"({duration:.2f} seconds)."
-    )
-
-    media.write_video(
-        VIDEO_PATH,
-        frames,
-        fps=VIDEO_FPS,
-    )
+    video_out.release()
 
     print(f"Video saved to: {VIDEO_PATH.resolve()}")
-
-    # Displays the video in Jupyter/IPython.
-    media.show_video(
-        frames,
-        fps=VIDEO_FPS,
-    )
-
