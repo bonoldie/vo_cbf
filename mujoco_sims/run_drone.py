@@ -15,7 +15,10 @@ from utils.utils import (
     draw_sphere,
     draw_vector,
     get_3d_position,
-    get_3d_velocity
+    get_3d_site_position,
+    get_3d_velocity,
+    get_3d_orientation,
+    get_3d_angular_velocity
 )
 
 from controllers.qp_3d import QP3D
@@ -23,7 +26,8 @@ from controllers.qp_3d import QP3D
 # --------------------------------------------------
 # Scenario
 # --------------------------------------------------
-target = np.array([4.0, 4.0, 3.8])
+target_position = np.array([4.0, 4.0, 3.8])
+target_heading = np.array([1.0, 0.0, 0.0])
 
 # SH params
 sh_n = 6
@@ -39,7 +43,7 @@ controller = None
 target_side = 1
 
 def generate_new_target(margin=0.5):
-    global target, target_side, controller, obstacles
+    global target_position, target_heading, target_side, controller, obstacles
 
     obstacle_positions = np.asarray(
         [obstacle["pos"] for obstacle in obstacles],
@@ -56,7 +60,7 @@ def generate_new_target(margin=0.5):
 
     target_side *= -1
 
-    target = np.array(
+    target_position = np.array(
         [
             target_x,
             np.random.uniform(cloud_min[1], cloud_max[1]),
@@ -68,28 +72,10 @@ def generate_new_target(margin=0.5):
         dtype=float,
     )
 
-    controller.set_target(target)
+    yaw = np.random.uniform(-np.pi, np.pi)
+    target_heading = np.asarray((np.cos(yaw),np.sin(yaw), 0.0))
 
-    return target
-
-# def generate_new_target():
-#     global target, controller
-#     target = np.array([np.random.uniform(-2.0,2.0), np.random.uniform(-2.0,2.0),np.random.uniform(0.2,4.0)])
-#     controller.set_target(target)
-
-# obstacles = [
-#     {
-#         "type": ObstacleType.SPHERE,
-#         "pos": (1, 1, 1),
-#         "radius": 0.25,
-#         
-#     },
-#     {
-#         "type": ObstacleType.SPHERE,
-#         "pos": (2, 2, 2),
-#         "radius": 0.25
-#     }
-# ]
+    # controller.set_target(target)
 
 def generate_obstacles(
     grid_size=(2, 3),
@@ -134,6 +120,34 @@ def generate_obstacles(
 
     return obstacles
 
+def get_state(d, robot_body_id):
+    x0, y0, z0 = get_3d_position(
+        d,
+        robot_body_id,
+    )
+
+    R0 = get_3d_orientation(
+        d,
+        robot_body_id,
+    )
+
+    vx0, vy0, vz0 = get_3d_velocity(
+        d,
+        robot_body_id,
+    )
+
+    omegax0, omegay0, omegaz0 = get_3d_angular_velocity(
+            d,
+            robot_body_id,
+        )
+
+    return np.concatenate((
+        np.array([x0, y0, z0], dtype=float),
+        np.asarray(R0, dtype=float).reshape(-1),
+        np.array([vx0, vy0, vz0], dtype=float),
+        np.array([omegax0, omegay0, omegaz0], dtype=float),
+    ))
+
 
 obstacles = generate_obstacles(
     grid_size=(2, 2),
@@ -151,27 +165,35 @@ m, d, bindings, get_collision_spheres = buildModel(
             "name": "robot1",
             "collision_radius": collision_radius,
             "pos": (0, 0, 0),
-            "robot_path": "scenarios/double_integrator/bot.xml"
-        }
+            "robot_path": "scenarios/drone/skydio_x2.xml"
+        },
+        {
+                    "name": "robot2",
+                    "collision_radius": collision_radius,
+                    "pos": (0, 0, 2),
+                    "robot_path": "scenarios/drone/skydio_x2.xml"
+                }
     ],
     obstacles,
-    base_path="scenarios/double_integrator/base.xml",
-    worldbody_path="scenarios/double_integrator/world.xml",
-    assets_path="scenarios/double_integrator/assets.xml",
-    defaults_path="scenarios/double_integrator/defaults.xml"
+    base_path="scenarios/drone/base.xml",
+    worldbody_path="scenarios/drone/world.xml",
+    assets_path="scenarios/drone/assets.xml",
+    defaults_path="scenarios/drone/defaults.xml"
 )
 
+
 # Robot actuation
-actuator_force_x = bindings["robot1"]["actuators"]["force_x"]
-actuator_force_y = bindings["robot1"]["actuators"]["force_y"]
-actuator_force_z = bindings["robot1"]["actuators"]["force_z"]
+actuator_thrust1 = bindings["robot1"]["actuators"]["thrust1"]
+actuator_thrust2 = bindings["robot1"]["actuators"]["thrust2"]
+actuator_thrust3 = bindings["robot1"]["actuators"]["thrust3"]
+actuator_thrust4 = bindings["robot1"]["actuators"]["thrust4"]
 
 DT = m.opt.timestep
 
 VIDEO_FPS = 30
 VIDEO_WIDTH = 1280
 VIDEO_HEIGHT = 720
-VIDEO_PATH = Path("videos/double_integrator_sim.mp4")
+VIDEO_PATH = Path("videos/drone_sim.mp4")
 
 m.vis.global_.offwidth = VIDEO_WIDTH
 m.vis.global_.offheight = VIDEO_HEIGHT
@@ -211,51 +233,57 @@ video_out = cv2.VideoWriter(VIDEO_PATH, fourcc, VIDEO_FPS, (VIDEO_WIDTH,VIDEO_HE
 def draw_custom_geometries(
     scene,
     robot_state,
-    acceleration_command,
-    current_target,
+    thrust_commands,
     show_collision_spheres,
 ):
     position = robot_state[:3]
-    acceleration_norm = np.linalg.norm(acceleration_command)
-    speed = np.linalg.norm(robot_state[3:])
+    drone_orientation = robot_state[3:12].reshape(3,3)
+    thrusts_norm = np.linalg.norm(thrust_commands)
+    speed = np.linalg.norm(robot_state[12:15])
+    arrow_length = 0.15
 
     # Acceleration command arrow.
-    if acceleration_norm > 1e-9:
-        arrow_length = 0.15
-        arrow_start = position + (
-            acceleration_command / acceleration_norm
-        ) * arrow_length
+    if thrusts_norm > 1e-9:
 
-        velocity_arrow_start = position + (
-            robot_state[3:] / speed
-        ) * arrow_length
+        for i in range(4):
+            motor_position = np.asarray(get_3d_site_position(d, bindings["robot1"]["sites"]["".join(["thrust", str(i+1)])]), dtype=float)
 
-        draw_vector(    
-            scene,
-            arrow_start,
-            acceleration_command * 2.0,
-            [1.0, 1.0, 0.0, 0.8],
-        )
+            # print(motor_position)
+            # print(drone_orientation[:, 2] * thrust_commands[i] * arrow_length)
 
-        draw_vector(    
-            scene,
-            velocity_arrow_start,
-            robot_state[3:]  * 2.0,
-            [0.0, 1.0, 0.0, 0.8],
-        )
+            draw_vector(    
+                scene,
+                motor_position,
+                drone_orientation[:, 2] * thrust_commands[i] * arrow_length,
+                [1.0, 1.0, 0.0, 0.8],
+            )
+
+    draw_vector(    
+        scene,
+        position,
+        robot_state[12:15] * arrow_length,
+        [0.0, 1.0, 0.0, 0.8],
+    )
 
 
-    # Target.
+    # Target
     draw_sphere(
         scene,
-        np.asarray(current_target),
+        np.asarray(target_position),
         (0.0, 1.0, 0.0, 1.0),
         0.06,
     )
 
+    draw_vector(
+        scene,
+        np.asarray(target_position),
+        target_heading * arrow_length * 2,
+        [0.2, 1.0, 0.2, 0.8],
+    )
+
     # Collision spheres.
     if show_collision_spheres:
-        obstacles = get_collision_spheres(["robot"])
+        obstacles = get_collision_spheres(["skydio_x2"], robot_body_name = "skydio_x2")
 
         for obstacle in obstacles.values():
             draw_sphere(
@@ -296,40 +324,20 @@ try:
         step = 0
         real_start_time = time.time()
 
-        x0, y0, z0 = get_3d_position(
-            d,
-            bindings["robot1"]["bodies"]["robot"],
-        )
+        initial_state = get_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
 
-        vx0, vy0, vz0 = get_3d_velocity(
-            d,
-            bindings["robot1"]["bodies"]["robot"],
-        )
+        # controller = QP3D(
+        #     dt=DT,
+        #     target=target,
+        #     initial_state=initial_state,
+        #     collision_radius=collision_radius,
+        #     sh_n=sh_n,
+        #     sh_tau=sh_tau,
+        #     obstacles=get_collision_spheres(["skydio_x2"]),
+        # )
 
-        initial_state = np.array(
-            [
-                x0,
-                y0,
-                z0,
-                vx0,
-                vy0,
-                vz0,
-            ],
-            dtype=float,
-        )
-
-        controller = QP3D(
-            dt=DT,
-            target=target,
-            initial_state=initial_state,
-            collision_radius=collision_radius,
-            sh_n=sh_n,
-            sh_tau=sh_tau,
-            obstacles=get_collision_spheres(["robot"]),
-        )
-
-        controller.set_max_accel(max_accel)
-        controller.set_reference_speed(ref_speed)
+        # controller.set_max_accel(max_accel)
+        # controller.set_reference_speed(ref_speed)
         generate_new_target() # controller.set_target(target)
 
         # --------------------------------------------------------------
@@ -356,53 +364,36 @@ try:
             # Read robot state
             # ----------------------------------------------------------
 
-            x, y, z = get_3d_position(
-                d,
-                bindings["robot1"]["bodies"]["robot"],
-            )
-
-            vx, vy, vz = get_3d_velocity(
-                d,
-                bindings["robot1"]["bodies"]["robot"],
-            )
-
-            robot_state = np.array(
-                [
-                    x,
-                    y,
-                    z,
-                    vx,
-                    vy,
-                    vz,
-                ],
-                dtype=float,
-            )
+            robot_state = get_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
 
             # ----------------------------------------------------------
             # Update controller
             # ----------------------------------------------------------
 
-            controller.update_state(robot_state)
+            # controller.update_state(robot_state)
 
-            controller.update_obstacles(
-                get_collision_spheres(["robot1"])
-            )
+            # controller.update_obstacles(
+            #     get_collision_spheres(["robot1"])
+            # )
 
-            acceleration_command = np.asarray(
-                controller.compute_command(),
-                dtype=float,
-            )
+            # force_command = np.asarray(
+            #     controller.compute_command(),
+            #     dtype=float,
+            # )
+
+            thrust_commands = np.array([2.0,2.0,2.0,2.0]) # np.zeros(4) 
 
             # ----------------------------------------------------------
             # Apply control
             # ----------------------------------------------------------
 
-            d.ctrl[actuator_force_x] = acceleration_command[0]
-            d.ctrl[actuator_force_y] = acceleration_command[1]
-            d.ctrl[actuator_force_z] = acceleration_command[2]
+            d.ctrl[actuator_thrust1] = thrust_commands[0]
+            d.ctrl[actuator_thrust2] = thrust_commands[1]
+            d.ctrl[actuator_thrust3] = thrust_commands[2]
+            d.ctrl[actuator_thrust4] = thrust_commands[3]
 
             distance_to_target = np.linalg.norm(
-                target - robot_state[:3]
+                target_position - robot_state[:3]
             )
 
             # ----------------------------------------------------------
@@ -415,8 +406,7 @@ try:
                 draw_custom_geometries(
                     scene=viewer.user_scn,
                     robot_state=robot_state,
-                    acceleration_command=acceleration_command,
-                    current_target=target,
+                    thrust_commands=thrust_commands,
                     show_collision_spheres=(
                         pb.show_obstacles_collision_boxes
                     ),
@@ -437,18 +427,17 @@ try:
                 # This adds the regular MuJoCo model to renderer.scene.
                 renderer.update_scene(
                     d,
-                    camera=render_camera,
+                    camera=render_camera
                 )
 
                 # Add target, acceleration arrow and collision spheres.
                 draw_custom_geometries(
-                    scene=renderer.scene,
+                    scene=viewer.user_scn,
                     robot_state=robot_state,
-                    acceleration_command=acceleration_command,
-                    current_target=target,
+                    thrust_commands=thrust_commands,
                     show_collision_spheres=(
                         pb.show_obstacles_collision_boxes
-                    ),
+                    )
                 )
 
                 frame = renderer.render()
@@ -464,17 +453,16 @@ try:
 
             if step % 80 == 0:
                 print("==============================")
-
                 print(
                     f"[t={d.time:6.3f}s ({d.time / (time.time() - real_start_time):6.3f}x)] "
                     f"state={format_vector(robot_state)} "
                     f"dist={distance_to_target:6.4f} "
-                    f"u={format_vector(acceleration_command)}"
+                    f"u={format_vector(thrust_commands)}"
                 )
 
                 print(
                     format_obstacles(
-                        get_collision_spheres()
+                        get_collision_spheres(robot_body_name = "skydio_x2")
                     )
                 )
 
@@ -482,7 +470,7 @@ try:
             # Generate a new target
             # ----------------------------------------------------------
 
-            velocity_norm = np.linalg.norm(robot_state[3:])
+            velocity_norm = np.linalg.norm(robot_state[12:15])
 
             if (
                 distance_to_target <= 0.005
@@ -491,7 +479,7 @@ try:
                 generate_new_target()
 
             step += 1
-            controller.increment_step()
+            # controller.increment_step()
 
             # ----------------------------------------------------------
             # Optional real-time synchronization

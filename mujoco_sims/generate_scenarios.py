@@ -81,14 +81,14 @@ def buildModel(
     
     bindings = dict(ids_mappings)
 
-    def get_collision_spheres(blacklist=[]):
+    def get_collision_spheres(blacklist=[], robot_body_name = "robot"):
         # Here get the current cars and obstacles position, velocity and acceleration, return a dict with { obstacle_name: [p: [px, py,pz], v:[vx, vy, vz]]}
         obstacles = {}
 
         for robot in filter(lambda x : x["name"] not in blacklist, robots):
             obstacles[robot["name"]] = {}
             obstacles[robot["name"]]["p"] = d.xpos[
-                bindings[robot["name"]]["bodies"]["robot"]
+                bindings[robot["name"]]["bodies"][robot_body_name]
             ]
 
             obstacle_vel = np.zeros(6)
@@ -97,7 +97,7 @@ def buildModel(
                 m,
                 d,
                 mujoco.mjtObj.mjOBJ_BODY,
-                bindings[robot["name"]]["bodies"]["robot"],
+                bindings[robot["name"]]["bodies"][robot_body_name],
                 obstacle_vel,
                 0  # world frame
             )

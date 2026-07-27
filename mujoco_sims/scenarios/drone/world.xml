@@ -1,0 +1,11 @@
+  <worldbody>
+        <!-- Floor below the robot, allowing free motion in 3D. -->
+        <geom
+            name="floor"
+            type="plane"
+            pos="0 0 -1"
+            size="5 5 .01"
+            material="grid" />
+
+        <light pos="0 0 5" dir="0 0 -1" />
+  </worldbody>

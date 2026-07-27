@@ -1,0 +1,24 @@
+ <default>
+    <default class="obstacle">
+        <geom
+            type="sphere"
+            rgba="0.25 0.45 0.95 1"
+            friction="0.8 0.1 0.01" />
+    </default>
+
+    <default class="x2">
+      <geom mass="0"/>
+      <motor ctrlrange="0 13"/>
+      <mesh scale="0.01 0.01 0.01"/>
+      <default class="visual">
+        <geom group="2" type="mesh" contype="0" conaffinity="0"/>
+      </default>
+      <default class="collision">
+        <geom group="3" type="box"/>
+        <default class="rotor">
+          <geom type="ellipsoid" size=".13 .13 .01"/>
+        </default>
+      </default>
+      <site group="5"/>
+    </default>
+</default>

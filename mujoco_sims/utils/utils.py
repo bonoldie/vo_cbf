@@ -22,10 +22,25 @@ def get_3d_position(d, body_id):
 
     return x, y, z
 
+
+def get_3d_site_position(d, site_id):
+    x, y, z= d.site_xpos[site_id]
+
+    return x, y, z
+
+def get_3d_orientation(d, body_id):
+    return d.xmat[body_id].reshape(3, 3)
+
 def get_3d_velocity(d, body_id):
     _, _, _, vx, vy, vz = d.cvel[body_id]
 
     return vx, vy, vz
+
+def get_3d_angular_velocity(d, body_id):
+    omega_x, omega_y, omega_z, _, _, _ = d.cvel[body_id]
+
+    return omega_x, omega_y, omega_z
+
 
 
 
@@ -43,13 +58,6 @@ def get_v_w(m, d, body_id):
     )
 
     return np.linalg.norm(body_vel[3:]), np.linalg.norm(body_vel[:3])
-
-    yaw = np.arctan2(
-        2.0 * (qw * qz + qx * qy),
-        1.0 - 2.0 * (qy * qy + qz * qz)
-    )
-
-    return x, y, yaw
 
 def Rz(v):
     v = v/np.linalg.norm(v)
@@ -69,7 +77,7 @@ def draw_vector(scene, start, vec, color):
         geom,
         type=mujoco.mjtGeom.mjGEOM_ARROW,
         size=[0.005, 0.005, np.linalg.norm(vec)],
-        pos=start + [0, 0, 0.05],
+        pos=start,
         mat=Rz(vec).flatten(),
         rgba=color
     )

@@ -80,3 +80,5 @@ coverage.xml
 *.swo
 
 .tmp
+
+*.mp4

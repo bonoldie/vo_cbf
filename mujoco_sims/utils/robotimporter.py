@@ -55,8 +55,11 @@ class RobotImporter:
                 self.map_actuator[old] = new
 
         # rename joint references inside actuators
-        if tag in ["velocity", "motor"] and "joint" in el.attrib :
-            el.attrib["joint"] = self._p(el.attrib["joint"])
+        if tag in ["velocity", "motor"]:
+            if "joint" in el.attrib :
+                el.attrib["joint"] = self._p(el.attrib["joint"])
+            if "site" in el.attrib :
+                el.attrib["site"] = self._p(el.attrib["site"])
 
         # recurse
         for child in el:
