@@ -35,7 +35,7 @@ controllers = []
 obstacles = [] 
 
 r = 1
-n = 10
+n = 6
 
 robots = [
     {
@@ -48,7 +48,7 @@ robots = [
 
 targets =  dict(zip(
     [robot["name"] for robot in robots],
-    [np.asarray((r * np.cos((2* np.pi / n) * i + (np.pi)), r * np.sin((2* np.pi / n) * i + (np.pi)), (1 if np.random.rand() >= 0.5 else -1) * np.random.rand()/100 )) for i in range(n)]
+    [np.asarray((r * np.cos((2* np.pi / n) * i + (np.pi)), r * np.sin((2* np.pi / n) * i + (np.pi)), (1 if np.random.rand() >= 0.5 else -1) * np.random.rand()/20 )) for i in range(n)]
     )
 )
 
@@ -358,6 +358,8 @@ try:
             # ----------------------------------------------------------
 
             if d.time >= next_frame_time:
+
+                print("FRAME SAVED!!!!")
                 # This adds the regular MuJoCo model to renderer.scene.
                 renderer.update_scene(
                     d,
@@ -372,8 +374,6 @@ try:
                 )
 
                 frame = renderer.render()
-                # frames.append(frame.copy())
-
                 video_out.write(frame[:, :, ::-1])
 
                 next_frame_time += frame_period
@@ -435,10 +435,9 @@ def append_raw(filename):
   return "{0}_{2}{1}".format(*os.path.splitext(filename) + ('x264',))
 
 if True:
-    duration = len(frames) / VIDEO_FPS
-
     video_out.release()
+
     os.system(f"ffmpeg -i {VIDEO_PATH} -y -vcodec libx264 {append_raw(VIDEO_PATH)} > /dev/null 2>&1")
 
-    print(f"Video saved to: {VIDEO_PATH.resolve()} (duration: {duration}s)")
+    print(f"Video saved to: {VIDEO_PATH.resolve()}")
 

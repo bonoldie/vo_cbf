@@ -337,17 +337,17 @@ class QP3D:
 
             cbf_at_reference = (drift_and_class_k + control_row @ acc_ref)
 
-            if self.step % 80 == 0:
-                print(
-                    f"ob {obstacle_name} "
-                    f"(pos={obstacle['p']}, vel={obstacle['v']}) "
-                    f"h={float(h_value):.6f}, "
-                    f"CBF(u_ref)={cbf_at_reference:.6f} >= 0, "
-                    f"row={control_row}, "
-                    f"lower={cbf_lower_bound:.6f}"
-                )
+            # if self.step % 80 == 0:
+            #     print(
+            #         f"ob {obstacle_name} "
+            #         f"(pos={obstacle['p']}, vel={obstacle['v']}) "
+            #         f"h={float(h_value):.6f}, "
+            #         f"CBF(u_ref)={cbf_at_reference:.6f} >= 0, "
+            #         f"row={control_row}, "
+            #         f"lower={cbf_lower_bound:.6f}"
+            #     )
 
-        print(f"Building constraints took {time.time() - constraint_start_time: 6.3f}s")
+        # print(f"Building constraints took {time.time() - constraint_start_time: 6.3f}s")
 
         lower = np.asarray(
             constraint_lower_bounds,
@@ -404,16 +404,16 @@ class QP3D:
         else: 
             self.cmd_accel = np.zeros(3)
 
-        if self.step % 80 == 0:
-            print(
-                f"OSQP status={results.info.status}, "
-                f"iterations={results.info.iter}, "
-                f"primal_residual={results.info.prim_res:.3e}, "
-                f"dual_residual={results.info.dual_res:.3e}, "
-                f"active_constraints={active_constraints}, "
-                f"acc_ref={' '.join(f'{a:3.6f}' for a in acc_ref)}, "
-                f"acc_cmd={' '.join(f'{a:3.6f}' for a in self.cmd_accel)}"
-            )
+        # if self.step % 80 == 0:
+        #     print(
+        #         f"OSQP status={results.info.status}, "
+        #         f"iterations={results.info.iter}, "
+        #         f"primal_residual={results.info.prim_res:.3e}, "
+        #         f"dual_residual={results.info.dual_res:.3e}, "
+        #         f"active_constraints={active_constraints}, "
+        #         f"acc_ref={' '.join(f'{a:3.6f}' for a in acc_ref)}, "
+        #         f"acc_cmd={' '.join(f'{a:3.6f}' for a in self.cmd_accel)}"
+        #     )
 
         return self.cmd_accel
 
