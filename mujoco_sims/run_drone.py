@@ -303,8 +303,8 @@ try:
     with mujoco.viewer.launch_passive(
         m,
         d,
-        show_left_ui=False,
-        show_right_ui=False,
+        show_left_ui=True,
+        show_right_ui=True,
     ) as viewer:
 
         # --------------------------------------------------------------
@@ -320,7 +320,7 @@ try:
         # Simulation setup
         # --------------------------------------------------------------
 
-        pb = Playback()
+        # pb = Playback()
         step = 0
         real_start_time = time.time()
 
@@ -352,13 +352,12 @@ try:
             # Playback control
             # ----------------------------------------------------------
 
-            if pb.step > 0:
-                pb.step -= 1
-
-            elif pb.paused:
-                viewer.sync()
-                time.sleep(0.05)
-                continue
+            # if pb.step > 0:
+            #     pb.step -= 1
+            # elif pb.paused:
+            #     viewer.sync()
+            #     time.sleep(0.05)
+            #     continue
 
             # ----------------------------------------------------------
             # Read robot state
@@ -407,9 +406,10 @@ try:
                     scene=viewer.user_scn,
                     robot_state=robot_state,
                     thrust_commands=thrust_commands,
-                    show_collision_spheres=(
-                        pb.show_obstacles_collision_boxes
-                    ),
+                    show_collision_spheres= ()
+                    # show_collision_spheres=(
+                    #     pb.show_obstacles_collision_boxes
+                    # ),
                 )
 
             # ----------------------------------------------------------
@@ -435,9 +435,10 @@ try:
                     scene=viewer.user_scn,
                     robot_state=robot_state,
                     thrust_commands=thrust_commands,
-                    show_collision_spheres=(
-                        pb.show_obstacles_collision_boxes
-                    )
+                    show_collision_spheres=()
+                    # show_collision_spheres=(
+                    #     pb.show_obstacles_collision_boxes
+                    # )
                 )
 
                 frame = renderer.render()
