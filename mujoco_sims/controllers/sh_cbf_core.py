@@ -5,7 +5,7 @@ import jaxopt
 from functools import partial
 
 from jax import config
-config.update("jax_enable_x64", True)
+config.update("jax_enable_x64", False)
 
 
 @jax.jit
@@ -217,7 +217,7 @@ def compute_sh_b(
         )
 
     # This solver select the scale factor s s.t. b =  b_lower + s_star * (b_upper - b_lower) minimize the get_tangency_error
-    solver = jaxopt.Bisection(optimality_fun=root_fun_normalized, lower=0.0, upper=1.0, maxiter=80, tol=1e-10, check_bracket=False)
+    solver = jaxopt.Bisection(optimality_fun=root_fun_normalized, lower=0.0, upper=1.0, maxiter=30, tol=1e-6, check_bracket=False)
 
     out = solver.run(
         a=a,
