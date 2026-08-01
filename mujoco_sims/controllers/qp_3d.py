@@ -1,15 +1,14 @@
+from .CBFGrad import *
+from .sh_cbf_core import compute_candidate_h_3D, class_K_function, compute_grad_params
+import matplotlib.pyplot as plt
+import scipy.sparse as sparse
+from scipy.interpolate import BPoly
 import osqp
 import time
 import numpy as np
 import jax.numpy as jnp
 import jax
 jax.config.update("jax_enable_x64", True)
-
-from scipy.interpolate import BPoly
-import scipy.sparse as sparse
-import matplotlib.pyplot as plt
-from .sh_cbf_core import compute_candidate_h_3D, class_K_function
-
 
 
 class QP3D:
@@ -66,9 +65,9 @@ class QP3D:
         dt,
         target=np.array([3.0, 3.0, 3.0]),
         initial_state=np.zeros(6),
-        sh_n = 6,
-        sh_tau = 1.2,
-        collision_radius = 0.5,
+        sh_n=6,
+        sh_tau=1.2,
+        collision_radius=0.5,
         obstacles=[],
     ):
         self.step = 0
@@ -88,30 +87,30 @@ class QP3D:
 
         # Double integrator model
         self.F = jnp.array([[
-            0, 0, 0, 1, 0, 0 ],[
-            0, 0, 0, 0, 1, 0 ],[
-            0, 0, 0, 0, 0, 1 ],[
-            0, 0, 0, 0, 0, 0 ],[
-            0, 0, 0, 0, 0, 0 ],[
-            0, 0, 0, 0, 0, 0 ]], 
+            0, 0, 0, 1, 0, 0], [
+            0, 0, 0, 0, 1, 0], [
+            0, 0, 0, 0, 0, 1], [
+            0, 0, 0, 0, 0, 0], [
+            0, 0, 0, 0, 0, 0], [
+            0, 0, 0, 0, 0, 0]],
             dtype=float)
 
         self.G = jnp.array([[
-            0, 0, 0 ],[
-            0, 0, 0 ],[
-            0, 0, 0 ],[
-            1, 0, 0 ],[
-            0, 1, 0 ],[
-            0, 0, 1 ]],
+            0, 0, 0], [
+            0, 0, 0], [
+            0, 0, 0], [
+            1, 0, 0], [
+            0, 1, 0], [
+            0, 0, 1]],
             dtype=float)
-        
+
         # self.setup_plot()
 
     def plot_trajectory(
-            self,
-            trajectory: BPoly,
-            T: float,
-        ) -> None:
+        self,
+        trajectory: BPoly,
+        T: float,
+    ) -> None:
         times = np.linspace(0.0, T, 200)
 
         positions = np.asarray(
@@ -191,8 +190,8 @@ class QP3D:
         T = max(
             0.5,
             distance / self.reference_speed
-        ) 
-    
+        )
+
         trajectory = BPoly.from_derivatives(
             [0.0, T],
             [
@@ -228,7 +227,7 @@ class QP3D:
     # ==============================================================
 
     def compute_command(self):
-    
+
         acc_ref = self.compute_acceleration_reference()
 
         # Constraints
@@ -307,6 +306,51 @@ class QP3D:
             )
 
             grad_h = jax.grad(h_as_function_of_robot_state)(self.state)
+
+            if True:
+                R, b, vy_tan = compute_grad_params(self.state,
+                                                   cbf_obstacle_state,
+                                                   self.collision_radius,
+                                                   obstacle['collision_radius'],
+                                                   n=self.sh_n,
+                                                   tau=self.sh_tau)
+                # Comparing the results from the explicit gradient and the computed one
+                # start = time.time()
+
+                explicit_grad_h = np.asarray(
+                    (
+                        CBFGrad3D_1_1(
+                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
+                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
+                            b, vy_tan, R, self.sh_tau, self.sh_n),
+                        CBFGrad3D_2_1(
+                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
+                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
+                            b, vy_tan, R, self.sh_tau, self.sh_n),
+                        CBFGrad3D_3_1(
+                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
+                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
+                            b, vy_tan, R, self.sh_tau, self.sh_n),
+                        CBFGrad3D_4_1(
+                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
+                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
+                            b, vy_tan, R, self.sh_tau, self.sh_n),
+                        CBFGrad3D_5_1(
+                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
+                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
+                            b, vy_tan, R, self.sh_tau, self.sh_n),
+                        CBFGrad3D_6_1(
+                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
+                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
+                            b, vy_tan, R, self.sh_tau, self.sh_n)
+                    )
+                )
+
+                # print(f"took {time.time()-start}s")
+                # print(f"jax: {grad_h}")
+                # print(f"explicit: {explicit_grad_h}")
+
+                grad_h = explicit_grad_h
 
             class_k = class_K_function(h_value, gamma=100.0, beta=0)
 
@@ -401,20 +445,18 @@ class QP3D:
 
             self.previous_solution = u_star.copy()
             self.cmd_accel = u_star.copy()
-        else: 
+        else:
             self.cmd_accel = np.zeros(3)
 
-        # if self.step % 80 == 0:
-        #     print(
-        #         f"OSQP status={results.info.status}, "
-        #         f"iterations={results.info.iter}, "
-        #         f"primal_residual={results.info.prim_res:.3e}, "
-        #         f"dual_residual={results.info.dual_res:.3e}, "
-        #         f"active_constraints={active_constraints}, "
-        #         f"acc_ref={' '.join(f'{a:3.6f}' for a in acc_ref)}, "
-        #         f"acc_cmd={' '.join(f'{a:3.6f}' for a in self.cmd_accel)}"
-        #     )
+        if self.step % 80 == 0:
+            print(
+                f"OSQP status={results.info.status}, "
+                f"iterations={results.info.iter}, "
+                f"primal_residual={results.info.prim_res:.3e}, "
+                f"dual_residual={results.info.dual_res:.3e}, "
+                f"active_constraints={active_constraints}, "
+                f"acc_ref={' '.join(f'{a:3.6f}' for a in acc_ref)}, "
+                f"acc_cmd={' '.join(f'{a:3.6f}' for a in self.cmd_accel)}"
+            )
 
         return self.cmd_accel
-
-

@@ -1,70 +1,99 @@
 clear all; close all; clc;
 
 % robot state
-syms x_r y_r vx_r vy_r real 
+syms x_r y_r z_r vx_r vy_r vz_r real 
 
 % acceleration inputs
-syms u_x u_y real;
+syms u_x u_y u_z real;
 
-system_state = [x_r; y_r; vx_r; vy_r];
+system_state = [x_r; y_r; z_r; vx_r; vy_r; vz_r];
 
-u = [u_x; u_y];
+u = [u_x; u_y; u_z];
 
-% Robot is just a 2D double integrator
-A = [ 0 0 1 0; 0 0 0 1; 0 0 0 0; 0 0 0 0];
+% Robot is just a 3D double integrator
+A = [ 0 0 0 1 0 0;...
+      0 0 0 0 1 0;... 
+      0 0 0 0 0 1;...
+      0 0 0 0 0 0;...
+      0 0 0 0 0 0;...
+      0 0 0 0 0 0];
 
 F = A*system_state;
 
-G = [ 0 0; 0 0; 1 0; 0 1];
+G = [ 0 0 0;...
+      0 0 0;...
+      0 0 0;...
+      1 0 0;...
+      0 1 0;...
+      0 0 1];
 
 % obstacle state
-syms x_ob y_ob vx_ob vy_ob real;
+syms x_ob y_ob z_ob vx_ob vy_ob vz_ob real;
 
-obstacle_state = [x_ob; y_ob; vx_ob; vy_ob];
+obstacle_state = [x_ob; y_ob; z_ob; vx_ob; vy_ob; vz_ob];
 
 % velocity to check
-v_rel = [vx_r - vx_ob; vy_r - vy_ob];
+v_rel = [vx_r - vx_ob; vy_r - vy_ob; vz_r - vz_ob];
 
 vx_rel = v_rel(1);
 vy_rel = v_rel(2);
+vz_rel = v_rel(3);
 
 % super-hyperbola parameters
 
 syms R tau n real;
 
-delta_p = obstacle_state(1:2) - system_state(1:2);
+delta_p = obstacle_state(1:3) - system_state(1:3);
 
-d = sqrt((x_ob - x_r)^2 + (y_ob - y_r)^2); % distance between the obstacle and the robot
+d = sqrt(delta_p.'*delta_p); % distance between the obstacle and the robot
+
 
 %% Obstacle-aligned local frame
 
-% Local +y axis points from robot to obstacle
+% Local +y axis points from robot toward obstacle
 e_y = delta_p / d;
 
-% Local +x axis is perpendicular to local +y
-% This convention produces a right-handed 2D frame:
-% det([e_x, e_y]) = +1
-e_x = [
-     e_y(2);
-    -e_y(1)
-];
+% A single direction does not uniquely define a 3D frame.
+% Use the world z-axis as a reference vector.
+reference_axis = sym([0; 0; 1]);
 
-% Transform a world-frame vector into the local frame.
-% Rows are the local basis vectors expressed in world coordinates.
-R_world_to_local = [
+% Local +x is perpendicular to both e_y and the reference axis.
+%
+% This symbolic expression becomes singular when e_y is parallel to the
+% world z-axis. The numerical plotting function below handles this case by
+% automatically selecting a different reference axis.
+e_x_raw = cross(e_y, reference_axis);
+
+e_x = simplify( ...
+    e_x_raw / sqrt(e_x_raw.' * e_x_raw) ...
+);
+
+% Complete a right-handed frame.
+%
+% Since:
+%   e_x cross e_y = e_z
+%
+% the basis [e_x, e_y, e_z] is right-handed.
+e_z = simplify(cross(e_x, e_y));
+
+% Rotation matrix from world coordinates to local coordinates.
+%
+% Each row is one local basis vector expressed in the world frame.
+R_world_to_local = simplify([
     e_x.';
-    e_y.'
-];
+    e_y.';
+    e_z.'
+]);
 
-% Inverse transformation
-R_local_to_world = R_world_to_local.';
+% Inverse rotation
+R_local_to_world = simplify(R_world_to_local.');
 
-% Relative velocity expressed in the obstacle-aligned frame
+% Relative velocity represented in the obstacle-aligned frame
 v_rel_local = simplify(R_world_to_local * v_rel);
 
 vx_rel_local = simplify(v_rel_local(1));
 vy_rel_local = simplify(v_rel_local(2));
-
+vz_rel_local = simplify(v_rel_local(3));
 
 %% SH parameters
 
@@ -72,19 +101,19 @@ a = (d - R) / tau;
 
 %% Gradients
 
-syms b(x_r, y_r, x_ob, y_ob);
+syms b(x_r, y_r, z_r, x_ob, y_ob, z_ob);
 
 U_cbf = a*(1.0 + (vx_rel_local / b)^n)^(1.0 / n) - vy_rel_local;
 
-grad_U_cbf = gradient(U_cbf, [x_r, y_r, vx_r, vy_r]);
+grad_U_cbf = gradient(U_cbf, [x_r, y_r, z_r, x_ob, y_ob, z_ob]);
 
-grad_U_cbf = grad_U_cbf(x_r, y_r, x_ob, y_ob);
+grad_U_cbf = grad_U_cbf(x_r, y_r, z_r, x_ob, y_ob, z_ob);
 grad_U_cbf = simplify(grad_U_cbf);
 
 % Now grad_U_cbf is the symbolic gradient that we need, inside it there are
 % the partial derivatives of b wrt the system state (i.e. [x_r, y_r, vx_r, vy_r])
 
-syms vy_tan vy_tan_func(x_r, y_r, x_ob, y_ob);
+syms vy_tan vy_tan_func(x_r, y_r, z_r, x_ob, y_ob, z_ob);
 
 % From this we will compute the partial derivatives of vy_tan (P in the
 % paper)
@@ -95,32 +124,34 @@ vx_tan = sqrt(R^2 - (vy_tan_func - d)^2);
 b_val = (a * vx_tan) / (vy_tan_func^n - a^n)^(1/n);
 
 % The following gradient of b is built with the partial derivative of vy_tan
-% wrt the system state (i.e. [x_r, y_r, vx_r, vy_r])
-grad_b_val = gradient(b_val,  [x_r, y_r, x_ob, y_ob]);
-grad_b_val = grad_b_val(x_r, y_r, x_ob, y_ob);
+% wrt the system state (i.e. [x_r, y_r, z_r, x_ob, y_ob, z_ob])
+grad_b_val = gradient(b_val,  [x_r, y_r, z_r, x_ob, y_ob, z_ob]);
+grad_b_val = grad_b_val(x_r, y_r, z_r, x_ob, y_ob, z_ob);
 grad_b_val = simplify(grad_b_val);
 
 dvy_tan_dx_r = - diff(vy_tan_eq, x_r)/diff(vy_tan_eq, vy_tan);
 dvy_tan_dy_r = - diff(vy_tan_eq, y_r)/diff(vy_tan_eq, vy_tan);
+dvy_tan_dz_r = - diff(vy_tan_eq, z_r)/diff(vy_tan_eq, vy_tan);
 dvy_tan_dx_ob = - diff(vy_tan_eq, x_ob)/diff(vy_tan_eq, vy_tan);
 dvy_tan_dy_ob = - diff(vy_tan_eq, y_ob)/diff(vy_tan_eq, vy_tan);
+dvy_tan_dz_ob = - diff(vy_tan_eq, z_ob)/diff(vy_tan_eq, vy_tan);
 
 grad_b_val = subs(grad_b_val,  ...
-    gradient(vy_tan_func, [x_r, y_r, x_ob, y_ob]),[ ...
-    dvy_tan_dx_r; dvy_tan_dy_r; dvy_tan_dx_ob; dvy_tan_dy_ob...
+    gradient(vy_tan_func, [x_r, y_r, z_r, x_ob, y_ob, z_ob]),[ ...
+    dvy_tan_dx_r; dvy_tan_dy_r;dvy_tan_dz_r; dvy_tan_dx_ob; dvy_tan_dy_ob; dvy_tan_dz_ob...
 ]);
 
 grad_b_val = simplify(grad_b_val);
 
 % substitute back to the CBF gradient
-grad_U_cbf = subs(grad_U_cbf, gradient(b, [x_r, y_r, x_ob, y_ob]), grad_b_val);
+grad_U_cbf = subs(grad_U_cbf, gradient(b, [x_r, y_r, z_r, x_ob, y_ob, z_ob]), grad_b_val);
 grad_U_cbf = simplify(grad_U_cbf);
 
 syms b_computed vy_tan_computed;
 
-final_grad_U_cbf = subs(grad_U_cbf, [ b(x_r, y_r, x_ob, y_ob), vy_tan_func(x_r, y_r, x_ob, y_ob)], [b_computed, vy_tan]);
+final_grad_U_cbf = subs(grad_U_cbf, [ b(x_r, y_r, z_r, x_ob, y_ob, z_ob), vy_tan_func(x_r, y_r, z_r, x_ob, y_ob, z_ob)], [b_computed, vy_tan]);
 
-% fprintMatPy('CBFGrad', {'x_r', 'y_r' ,'vx_r', 'vy_r', 'x_ob', 'y_ob', 'vx_ob', 'vy_ob', 'b_computed', 'vy_tan', 'R', 'tau', 'n'}, final_grad_U_cbf);
+% fprintMatPy('CBFGrad3D', {'x_r', 'y_r' , 'z_r', 'vx_r', 'vy_r', 'vz_r', 'x_ob', 'y_ob', 'z_ob','vx_ob', 'vy_ob', 'vz_ob', 'b_computed', 'vy_tan', 'R', 'tau', 'n'}, final_grad_U_cbf);
 
 %% Grad validation
 % barrier_val = final_grad_U_cbf' * F + final_grad_U_cbf' * G * u + 10 * U_cbf; 

@@ -226,9 +226,7 @@ def draw_custom_geometries(
             acceleration_command / acceleration_norm
         ) * arrow_length
 
-        velocity_arrow_start = position + (
-            robot_state[3:] / speed
-        ) * arrow_length
+        
 
         draw_vector(    
             scene,
@@ -236,6 +234,11 @@ def draw_custom_geometries(
             acceleration_command * 2.0,
             [1.0, 1.0, 0.0, 0.8],
         )
+
+    if speed > 1e-9:
+        velocity_arrow_start = position + (
+            robot_state[3:] / speed
+        ) * arrow_length
 
         draw_vector(    
             scene,

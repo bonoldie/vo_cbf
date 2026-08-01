@@ -3,9 +3,10 @@ import jax.numpy as jnp
 import numpy as np
 import jaxopt 
 from functools import partial
+from scipy import optimize
 
 from jax import config
-config.update("jax_enable_x64", False)
+config.update("jax_enable_x64", True)
 
 
 @jax.jit
@@ -329,3 +330,67 @@ def compute_candidate_h_3D(
         * (1.0 + (v_tangential / b) ** n) ** (1.0 / n)
         - v_parallel
     )
+
+
+def compute_grad_params(
+    robot_state: np.ndarray,
+    obstacle_state: np.ndarray,
+    robot_radius: float,
+    obstacle_radius: float,
+    n: int,
+    tau: float,
+):
+    dtype = robot_state.dtype
+    eps = np.asarray(1e-6, dtype=dtype)
+
+    p_robot = robot_state[:3]
+    p_obstacle = obstacle_state[:3]
+
+    # Robot -> obstacle direction
+    delta_p = p_obstacle - p_robot
+
+    # Smooth norm: derivative is finite even at delta_p == 0
+    distance = np.sqrt(np.dot(delta_p, delta_p) + eps**2)
+  
+    robot_state_local = np.zeros((2,), dtype=dtype)
+
+    obstacle_state_local = np.stack(
+        (
+            np.asarray(0.0, dtype=dtype),
+            distance,
+        )
+    )
+
+    a = compute_sh_a(
+        robot_state_local,
+        obstacle_state_local,
+        robot_radius,
+        obstacle_radius,
+        tau,
+    )
+
+    # b = compute_sh_b(
+    #     robot_state_local,
+    #     obstacle_state_local,
+    #     robot_radius,
+    #     obstacle_radius,
+    #     n,
+    #     tau,
+    # )
+
+    R = robot_radius + obstacle_radius
+
+    vy_tan_func = lambda vy_tan: distance*(vy_tan**n) - (distance**2 - R**2) * vy_tan ** (n - 1) - (a**n) * vy_tan + distance*(a**n)
+
+    vy_tan = 0
+
+
+    try:
+        vy_tan = optimize.bisect(vy_tan_func, distance - R/2 , distance + R/2, maxiter=30, rtol=1e-8)
+        b = a * np.sqrt(R**2 - (vy_tan-distance)**2) / ((vy_tan**n - a**n) ** (1/n))
+        # print(f"b = {b}/{estimated_b}") 
+    except:
+        print(f"cannot find vy_tan with d:{distance}, R:{R}, n:{n}, a:{a}")
+        # cannot find vy_tan with d:0.8198043944439318, R:0.4, n:6, a:0.34983699536994317
+    
+    return R, b, vy_tan
