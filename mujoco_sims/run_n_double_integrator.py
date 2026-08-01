@@ -7,6 +7,7 @@ import mediapy as media
 from pathlib import Path
 import cv2 as cv2
 import os
+import jax
 
 from generate_scenarios import buildModel, format_obstacles
 from utils.playback import Playback
@@ -19,6 +20,7 @@ from utils.utils import (
 )
 
 from controllers.qp_3d import QP3D
+from controllers.qp_3d_profiled import QP3DProfiled
 
 # SH params
 sh_n = 6
@@ -35,7 +37,7 @@ controllers = []
 obstacles = [] 
 
 r = 1
-n = 6
+n = 2
 
 robots = [
     {
@@ -234,14 +236,29 @@ try:
                 dtype=float,
             )
 
-            controller = QP3D(
+            # controller = QP3D(
+            #     dt=DT,
+            #     target=targets[robot["name"]],
+            #     initial_state=initial_state,
+            #     collision_radius=collision_radius,
+            #     sh_n=sh_n,
+            #     sh_tau=sh_tau,
+            #     obstacles=get_collision_spheres(robot["name"]),
+            #     device_id=0
+            # )
+
+            controller = QP3DProfiled(
                 dt=DT,
                 target=targets[robot["name"]],
                 initial_state=initial_state,
                 collision_radius=collision_radius,
-                sh_n=sh_n,
-                sh_tau=sh_tau,
                 obstacles=get_collision_spheres(robot["name"]),
+
+                # Index in jax.devices("gpu")
+                device_id=0,
+
+                profile=True,
+                profile_every=1,
             )
 
             controller.set_max_accel(max_accel)
@@ -419,7 +436,9 @@ try:
             #
             # if remaining_time > 0.0:
             #     time.sleep(remaining_time)
-
+except:
+    print("Error")
+    
 finally:
     # if controller is not None:
     #     controller.stop()
