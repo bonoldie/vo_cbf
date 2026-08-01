@@ -1,4 +1,5 @@
 videos
+mujoco_sims/assets/robotis_mujoco_menagerie
 
 # Autosave files
 *.asv
