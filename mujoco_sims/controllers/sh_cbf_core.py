@@ -369,28 +369,25 @@ def compute_grad_params(
         tau,
     )
 
-    # b = compute_sh_b(
-    #     robot_state_local,
-    #     obstacle_state_local,
-    #     robot_radius,
-    #     obstacle_radius,
-    #     n,
-    #     tau,
-    # )
+    b = compute_sh_b(
+        robot_state_local,
+        obstacle_state_local,
+        robot_radius,
+        obstacle_radius,
+        n,
+        tau
+    )
 
     R = robot_radius + obstacle_radius
 
     vy_tan_func = lambda vy_tan: distance*(vy_tan**n) - (distance**2 - R**2) * vy_tan ** (n - 1) - (a**n) * vy_tan + distance*(a**n)
 
-    vy_tan = 0
-
-
     try:
-        vy_tan = optimize.bisect(vy_tan_func, distance - R/2 , distance + R/2, maxiter=30, rtol=1e-8)
-        b = a * np.sqrt(R**2 - (vy_tan-distance)**2) / ((vy_tan**n - a**n) ** (1/n))
+        vy_tan = optimize.bisect(vy_tan_func, distance - R , distance + R, maxiter=50, rtol=1e-8)
+        # b = a * np.sqrt(R**2 - (vy_tan-distance)**2) / ((vy_tan**n - a**n) ** (1/n))
         # print(f"b = {b}/{estimated_b}") 
     except:
-        print(f"cannot find vy_tan with d:{distance}, R:{R}, n:{n}, a:{a}")
+        print(f"cannot find vy_tan with d:{distance}, R:{R}, n:{n}, a:{a}, b:{b}")
         # cannot find vy_tan with d:0.8198043944439318, R:0.4, n:6, a:0.34983699536994317
     
     return R, b, vy_tan

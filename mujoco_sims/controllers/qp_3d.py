@@ -317,6 +317,8 @@ class QP3D:
                 # Comparing the results from the explicit gradient and the computed one
                 # start = time.time()
 
+                print(f"(self.state[0]: {self.state[0]}, self.state[1]:{self.state[1]}, self.state[2]:{self.state[2]}, self.state[3]:{self.state[3]}, self.state[4]:{self.state[4]}, self.state[5]:{self.state[5]}, cbf_obstacle_state[0]:{cbf_obstacle_state[0]}, cbf_obstacle_state[1]:{cbf_obstacle_state[1]}, cbf_obstacle_state[2]:{cbf_obstacle_state[2]}, cbf_obstacle_state[3]:{cbf_obstacle_state[3]}, cbf_obstacle_state[4]:{cbf_obstacle_state[4]}, cbf_obstacle_state[5]:{cbf_obstacle_state[5]}, b: {b}, vy_tan:{vy_tan}, R:{R}, self.sh_tau:{self.sh_tau}, self.sh_n:{self.sh_n})")
+
                 explicit_grad_h = np.asarray(
                     (
                         CBFGrad3D_1_1(
@@ -347,8 +349,8 @@ class QP3D:
                 )
 
                 # print(f"took {time.time()-start}s")
-                # print(f"jax: {grad_h}")
-                # print(f"explicit: {explicit_grad_h}")
+                print(f"jax: {grad_h}")
+                print(f"explicit: {explicit_grad_h}")
 
                 grad_h = explicit_grad_h
 

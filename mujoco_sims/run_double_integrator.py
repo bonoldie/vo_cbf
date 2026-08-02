@@ -23,7 +23,7 @@ from controllers.qp_3d import QP3D
 # --------------------------------------------------
 # Scenario
 # --------------------------------------------------
-target = np.array([4.0, 4.0, 3.8])
+target = np.array([1.0, 1.0, 1.0])
 
 # SH params
 sh_n = 6
@@ -135,15 +135,21 @@ def generate_obstacles(
     return obstacles
 
 
-obstacles = generate_obstacles(
-    grid_size=(2, 2),
-    density=2,
-    cell_size=1,
-    z_range=(0.5, 1.5),
-    seed=44,
-)
+# obstacles = generate_obstacles(
+#     grid_size=(2, 2),
+#     density=2,
+#     cell_size=1,
+#     z_range=(0.5, 1.5),
+#     seed=44,
+# )
 
-# obstacles = []
+obstacles = [
+    {
+        "type": ObstacleType.SPHERE,
+        "pos": (0.5, 0.55, 0.55),
+        "radius": 0.25,
+    }
+]
 
 m, d, bindings, get_collision_spheres = buildModel(
     [
@@ -236,6 +242,7 @@ def draw_custom_geometries(
         )
 
     if speed > 1e-9:
+        arrow_length = 0.15
         velocity_arrow_start = position + (
             robot_state[3:] / speed
         ) * arrow_length

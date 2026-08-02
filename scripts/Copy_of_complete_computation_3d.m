@@ -50,50 +50,31 @@ d = sqrt(delta_p.'*delta_p); % distance between the obstacle and the robot
 
 %% Obstacle-aligned local frame
 
-% Local +y axis points from robot toward obstacle
-e_y = delta_p / d;
+eps_d = 1e-9;
+eps_v = 1e-9;
 
-% A single direction does not uniquely define a 3D frame.
-% Use the world z-axis as a reference vector.
-reference_axis = sym([0; 0; 1]);
+d_squared = simplify(delta_p.' * delta_p);
+d_safe_squared = d_squared + eps_d^2;
+d_safe = sqrt(d_safe_squared);
 
-% Local +x is perpendicular to both e_y and the reference axis.
-%
-% This symbolic expression becomes singular when e_y is parallel to the
-% world z-axis. The numerical plotting function below handles this case by
-% automatically selecting a different reference axis.
-e_x_raw = cross(e_y, reference_axis);
+% Smooth radial direction
+e_y = simplify(delta_p / d_safe);
 
-e_x = simplify( ...
-    e_x_raw / sqrt(e_x_raw.' * e_x_raw) ...
+% Radial relative velocity
+v_radial = simplify(v_rel.' * e_y);
+
+% Tangential projection matrix
+P_tangential = simplify( ...
+    eye(3) - (delta_p * delta_p.') / d_safe_squared ...
 );
 
-% Complete a right-handed frame.
-%
-% Since:
-%   e_x cross e_y = e_z
-%
-% the basis [e_x, e_y, e_z] is right-handed.
-e_z = simplify(cross(e_x, e_y));
+% Tangential relative velocity
+v_tangential_vector = simplify(P_tangential * v_rel);
 
-% Rotation matrix from world coordinates to local coordinates.
-%
-% Each row is one local basis vector expressed in the world frame.
-R_world_to_local = simplify([
-    e_x.';
-    e_y.';
-    e_z.'
-]);
-
-% Inverse rotation
-R_local_to_world = simplify(R_world_to_local.');
-
-% Relative velocity represented in the obstacle-aligned frame
-v_rel_local = simplify(R_world_to_local * v_rel);
-
-vx_rel_local = simplify(v_rel_local(1));
-vy_rel_local = simplify(v_rel_local(2));
-vz_rel_local = simplify(v_rel_local(3));
+% Smooth norm
+v_tangential = simplify(sqrt( ...
+    v_tangential_vector.' * v_tangential_vector + eps_v^2 ...
+));
 
 %% SH parameters
 
@@ -101,60 +82,62 @@ a = (d - R) / tau;
 
 %% Gradients
 
-syms b(x_r, y_r, z_r, x_ob, y_ob, z_ob);
+syms b(x_r, y_r, z_r, vx_r, vy_r, vz_r);
 
-U_cbf = a*(1.0 + (vx_rel_local / b)^n)^(1.0 / n) - vy_rel_local;
+h = a*(1.0 + (v_tangential / b)^n)^(1.0 / n) - v_radial;
 
-grad_U_cbf = gradient(U_cbf, [x_r, y_r, z_r, x_ob, y_ob, z_ob]);
+grad_h = gradient(h, [x_r, y_r, z_r, vx_r, vy_r, vz_r]);
+% Symfun to array of sym
+grad_h = grad_h(x_r, y_r, z_r, vx_r, vy_r, vz_r);
 
-grad_U_cbf = grad_U_cbf(x_r, y_r, z_r, x_ob, y_ob, z_ob);
-grad_U_cbf = simplify(grad_U_cbf);
+% Now grad_h is the symbolic gradient that we need, it contains the partial
+% derivatives of b wrt the system state
 
-% Now grad_U_cbf is the symbolic gradient that we need, inside it there are
-% the partial derivatives of b wrt the system state (i.e. [x_r, y_r, vx_r, vy_r])
-
-syms vy_tan vy_tan_func(x_r, y_r, z_r, x_ob, y_ob, z_ob);
+syms vy_tan vy_tan_func(x_r, y_r, z_r, vx_r, vy_r, vz_r);
 
 % From this we will compute the partial derivatives of vy_tan (P in the
 % paper)
-vy_tan_eq = d*(vy_tan^n) - (d^2 - R^2) * vy_tan ^ (n - 1) - a^n * vy_tan + d*a^n;
+vy_tan_eq = d*(vy_tan^n) - (d^2 - R^2) * vy_tan ^ (n - 1) - (a^n) * vy_tan + d*(a^n);
 
 vx_tan = sqrt(R^2 - (vy_tan_func - d)^2); 
 
 b_val = (a * vx_tan) / (vy_tan_func^n - a^n)^(1/n);
 
 % The following gradient of b is built with the partial derivative of vy_tan
-% wrt the system state (i.e. [x_r, y_r, z_r, x_ob, y_ob, z_ob])
-grad_b_val = gradient(b_val,  [x_r, y_r, z_r, x_ob, y_ob, z_ob]);
-grad_b_val = grad_b_val(x_r, y_r, z_r, x_ob, y_ob, z_ob);
-grad_b_val = simplify(grad_b_val);
+% wrt the system state (i.e. [x_r, y_r, z_r, vx_r, vy_r, vz_r])
+grad_b_val = gradient(b_val,  [x_r, y_r, z_r, vx_r, vy_r, vz_r]);
+grad_b_val = grad_b_val(x_r, y_r, z_r, vx_r, vy_r, vz_r);
+% grad_b_val = simplify(grad_b_val);
 
-dvy_tan_dx_r = - diff(vy_tan_eq, x_r)/diff(vy_tan_eq, vy_tan);
-dvy_tan_dy_r = - diff(vy_tan_eq, y_r)/diff(vy_tan_eq, vy_tan);
-dvy_tan_dz_r = - diff(vy_tan_eq, z_r)/diff(vy_tan_eq, vy_tan);
-dvy_tan_dx_ob = - diff(vy_tan_eq, x_ob)/diff(vy_tan_eq, vy_tan);
-dvy_tan_dy_ob = - diff(vy_tan_eq, y_ob)/diff(vy_tan_eq, vy_tan);
-dvy_tan_dz_ob = - diff(vy_tan_eq, z_ob)/diff(vy_tan_eq, vy_tan);
+dvy_tan_eq_dvy_tan = diff(vy_tan_eq, vy_tan);
+
+dvy_tan_dx_r = - diff(vy_tan_eq, x_r)/dvy_tan_eq_dvy_tan;
+dvy_tan_dy_r = - diff(vy_tan_eq, y_r)/dvy_tan_eq_dvy_tan;
+dvy_tan_dz_r = - diff(vy_tan_eq, z_r)/dvy_tan_eq_dvy_tan;
+dvy_tan_dvx_r = - diff(vy_tan_eq, vx_r)/dvy_tan_eq_dvy_tan;
+dvy_tan_dvy_r = - diff(vy_tan_eq, vy_r)/dvy_tan_eq_dvy_tan;
+dvy_tan_dvz_r = - diff(vy_tan_eq, vz_r)/dvy_tan_eq_dvy_tan;
 
 grad_b_val = subs(grad_b_val,  ...
-    gradient(vy_tan_func, [x_r, y_r, z_r, x_ob, y_ob, z_ob]),[ ...
-    dvy_tan_dx_r; dvy_tan_dy_r;dvy_tan_dz_r; dvy_tan_dx_ob; dvy_tan_dy_ob; dvy_tan_dz_ob...
+    gradient(vy_tan_func, [x_r, y_r, z_r, vx_r, vy_r, vz_r]),[ ...
+    dvy_tan_dx_r; dvy_tan_dy_r;dvy_tan_dz_r; dvy_tan_dvx_r; dvy_tan_dvy_r; dvy_tan_dvz_r...
 ]);
 
-grad_b_val = simplify(grad_b_val);
+% grad_b_val = simplify(grad_b_val);
 
 % substitute back to the CBF gradient
-grad_U_cbf = subs(grad_U_cbf, gradient(b, [x_r, y_r, z_r, x_ob, y_ob, z_ob]), grad_b_val);
-grad_U_cbf = simplify(grad_U_cbf);
+grad_h = subs(grad_h, gradient(b, [x_r, y_r, z_r, vx_r, vy_r, vz_r]), grad_b_val);
+% grad_h = simplify(grad_h);
 
-syms b_computed vy_tan_computed;
+syms b_computed;
 
-final_grad_U_cbf = subs(grad_U_cbf, [ b(x_r, y_r, z_r, x_ob, y_ob, z_ob), vy_tan_func(x_r, y_r, z_r, x_ob, y_ob, z_ob)], [b_computed, vy_tan]);
+final_grad_h = subs(grad_h, [ b(x_r, y_r, z_r, vx_r, vy_r, vz_r), vy_tan_func(x_r, y_r, z_r, vx_r, vy_r, vz_r)], [b_computed, vy_tan]);
+% final_grad_h = simplify(final_grad_h)
 
-% fprintMatPy('CBFGrad3D', {'x_r', 'y_r' , 'z_r', 'vx_r', 'vy_r', 'vz_r', 'x_ob', 'y_ob', 'z_ob','vx_ob', 'vy_ob', 'vz_ob', 'b_computed', 'vy_tan', 'R', 'tau', 'n'}, final_grad_U_cbf);
+% fprintMatPy('CBFGrad3D', {'x_r', 'y_r' , 'z_r', 'vx_r', 'vy_r', 'vz_r', 'x_ob', 'y_ob', 'z_ob','vx_ob', 'vy_ob', 'vz_ob', 'b_computed', 'vy_tan', 'R', 'tau', 'n'}, final_grad_h);
 
 %% Grad validation
-% barrier_val = final_grad_U_cbf' * F + final_grad_U_cbf' * G * u + 10 * U_cbf; 
+% barrier_val = final_grad_h' * F + final_grad_h' * G * u + 10 * U_cbf; 
 
 %% Plotting possible configurations
 
