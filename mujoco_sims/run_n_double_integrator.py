@@ -19,8 +19,7 @@ from utils.utils import (
     get_3d_velocity
 )
 
-from controllers.qp_3d import QP3D
-from controllers.qp_3d_profiled import QP3DProfiled
+from controllers.qp_3d_precomp import QP3DPPrecomp
 
 # SH params
 sh_n = 6
@@ -247,7 +246,7 @@ try:
             #     device_id=0
             # )
 
-            controller = QP3DProfiled(
+            controller = QP3DPPrecomp(
                 dt=DT,
                 target=targets[robot["name"]],
                 initial_state=initial_state,

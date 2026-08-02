@@ -8,6 +8,10 @@ from scipy import optimize
 from jax import config
 config.update("jax_enable_x64", True)
 
+from .CBFGrad import *
+
+
+
 
 @jax.jit
 def class_K_function(h, gamma=1.0 , beta = 1.0):
@@ -332,7 +336,7 @@ def compute_candidate_h_3D(
     )
 
 
-def compute_grad_params(
+def compute_and_eval_h_and_grad(
     robot_state: np.ndarray,
     obstacle_state: np.ndarray,
     robot_radius: float,
@@ -340,54 +344,89 @@ def compute_grad_params(
     n: int,
     tau: float,
 ):
+    """
+    Computes and evaluates the values of the CBF and its gradient (using the explicit form found with matlab)  
+    """
     dtype = robot_state.dtype
     eps = np.asarray(1e-6, dtype=dtype)
 
+    R = robot_radius + obstacle_radius
     p_robot = robot_state[:3]
     p_obstacle = obstacle_state[:3]
+    v_robot = robot_state[3:]
+    v_obstacle = obstacle_state[3:]
 
     # Robot -> obstacle direction
     delta_p = p_obstacle - p_robot
 
     # Smooth norm: derivative is finite even at delta_p == 0
     distance = np.sqrt(np.dot(delta_p, delta_p) + eps**2)
-  
-    robot_state_local = np.zeros((2,), dtype=dtype)
 
-    obstacle_state_local = np.stack(
-        (
-            np.asarray(0.0, dtype=dtype),
-            distance,
+    a = (distance - R) / tau
+
+    D_term = distance**2 - R**2 - a**2
+    inner_term = np.maximum(0.0,D_term**2 - 4.0 * a**2 * R**2)
+    
+    b_2 = np.sqrt(0.5 * (D_term - np.sqrt(inner_term)))
+    
+    b_lower = np.array(1e-10, dtype=np.float64)
+    b_upper = b_2 * 10.0
+
+
+    # This solver select the scale factor s s.t. b =  b_lower + s_star * (b_upper - b_lower) minimize the get_tangency_error
+    b_root_fun_normalized = lambda s: get_tangency_error(b_lower + s * (b_upper - b_lower), a, n, distance, R)
+    s_star = optimize.bisect(b_root_fun_normalized, 0.0, 1.0, maxiter=50, rtol=1e-8)
+    b = b_lower + s_star * (b_upper - b_lower)
+
+    vy_tan_func = lambda vy_tan: distance*(vy_tan**n) - (distance**2 - R**2) * vy_tan ** (n - 1) - (a**n) * vy_tan + distance*(a**n)
+    vy_tan = optimize.bisect(vy_tan_func, distance - R, distance + R, maxiter=50, rtol=1e-8)
+
+    e_los = delta_p / distance
+
+    vrel = v_robot - v_obstacle
+
+    # Relative velocity along robot -> obstacle direction
+    v_parallel = np.dot(vrel, e_los)
+
+    # Relative velocity perpendicular to line of sight
+    v_perpendicular = vrel - v_parallel * e_los
+
+    # Smooth perpendicular speed
+    v_tangential = (
+        np.sqrt(
+            np.dot(v_perpendicular, v_perpendicular) + eps**2
+        )
+        - eps
+    )
+
+    h_value = a * (1.0 + (v_tangential / b) ** n) ** (1.0 / n) - v_parallel
+
+    grad_h_value =  np.asarray((
+        CBFGrad3D_1_1(
+            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
+            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
+            b, vy_tan, R, tau, n),
+        CBFGrad3D_2_1(
+            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
+            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
+            b, vy_tan, R, tau, n),
+        CBFGrad3D_3_1(
+            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
+            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
+            b, vy_tan, R, tau, n),
+        CBFGrad3D_4_1(
+            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
+            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
+            b, vy_tan, R, tau, n),
+        CBFGrad3D_5_1(
+            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
+            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
+            b, vy_tan, R, tau, n),
+        CBFGrad3D_6_1(
+            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
+            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
+            b, vy_tan, R, tau, n)
         )
     )
 
-    a = compute_sh_a(
-        robot_state_local,
-        obstacle_state_local,
-        robot_radius,
-        obstacle_radius,
-        tau,
-    )
-
-    b = compute_sh_b(
-        robot_state_local,
-        obstacle_state_local,
-        robot_radius,
-        obstacle_radius,
-        n,
-        tau
-    )
-
-    R = robot_radius + obstacle_radius
-
-    vy_tan_func = lambda vy_tan: distance*(vy_tan**n) - (distance**2 - R**2) * vy_tan ** (n - 1) - (a**n) * vy_tan + distance*(a**n)
-
-    try:
-        vy_tan = optimize.bisect(vy_tan_func, distance - R , distance + R, maxiter=50, rtol=1e-8)
-        # b = a * np.sqrt(R**2 - (vy_tan-distance)**2) / ((vy_tan**n - a**n) ** (1/n))
-        # print(f"b = {b}/{estimated_b}") 
-    except:
-        print(f"cannot find vy_tan with d:{distance}, R:{R}, n:{n}, a:{a}, b:{b}")
-        # cannot find vy_tan with d:0.8198043944439318, R:0.4, n:6, a:0.34983699536994317
-    
-    return R, b, vy_tan
+    return b, a, vy_tan, h_value, grad_h_value

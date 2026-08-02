@@ -18,12 +18,12 @@ from utils.utils import (
     get_3d_velocity
 )
 
-from controllers.qp_3d import QP3D
+from controllers.qp_3d_precomp import QP3DPPrecomp
 
 # --------------------------------------------------
 # Scenario
 # --------------------------------------------------
-target = np.array([1.0, 1.0, 1.0])
+target = np.array([4.0, 2.0, 3.0])
 
 # SH params
 sh_n = 6
@@ -72,25 +72,6 @@ def generate_new_target(margin=0.5):
 
     return target
 
-# def generate_new_target():
-#     global target, controller
-#     target = np.array([np.random.uniform(-2.0,2.0), np.random.uniform(-2.0,2.0),np.random.uniform(0.2,4.0)])
-#     controller.set_target(target)
-
-# obstacles = [
-#     {
-#         "type": ObstacleType.SPHERE,
-#         "pos": (1, 1, 1),
-#         "radius": 0.25,
-#         
-#     },
-#     {
-#         "type": ObstacleType.SPHERE,
-#         "pos": (2, 2, 2),
-#         "radius": 0.25
-#     }
-# ]
-
 def generate_obstacles(
     grid_size=(2, 3),
     density=2,
@@ -135,21 +116,21 @@ def generate_obstacles(
     return obstacles
 
 
-# obstacles = generate_obstacles(
-#     grid_size=(2, 2),
-#     density=2,
-#     cell_size=1,
-#     z_range=(0.5, 1.5),
-#     seed=44,
-# )
+obstacles = generate_obstacles(
+        grid_size=(2, 2),
+    density=2,
+    cell_size=1,
+    z_range=(0.5, 1.5),
+    seed=44,
+)
 
-obstacles = [
-    {
-        "type": ObstacleType.SPHERE,
-        "pos": (0.5, 0.55, 0.55),
-        "radius": 0.25,
-    }
-]
+# obstacles = [
+#     {
+#         "type": ObstacleType.SPHERE,
+#         "pos": (0.5, 0.55, 0.55),
+#         "radius": 0.25,
+#     }
+# ]
 
 m, d, bindings, get_collision_spheres = buildModel(
     [
@@ -328,7 +309,7 @@ try:
             dtype=float,
         )
 
-        controller = QP3D(
+        controller = QP3DPPrecomp(
             dt=DT,
             target=target,
             initial_state=initial_state,

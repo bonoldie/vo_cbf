@@ -50,8 +50,8 @@ d = sqrt(delta_p.'*delta_p); % distance between the obstacle and the robot
 
 %% Obstacle-aligned local frame
 
-eps_d = 1e-9;
-eps_v = 1e-9;
+eps_d = 1e-6;
+eps_v = 1e-6;
 
 d_squared = simplify(delta_p.' * delta_p);
 d_safe_squared = d_squared + eps_d^2;
