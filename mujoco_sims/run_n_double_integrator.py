@@ -7,7 +7,7 @@ import mediapy as media
 from pathlib import Path
 import cv2 as cv2
 import os
-import jax
+from sh_constraint_plotter import SHConstraintPlotter
 
 from generate_scenarios import buildModel, format_obstacles
 from utils.playback import Playback
@@ -36,7 +36,7 @@ controllers = []
 obstacles = [] 
 
 r = 1
-n = 2
+n = 5
 
 robots = [
     {
@@ -49,7 +49,7 @@ robots = [
 
 targets =  dict(zip(
     [robot["name"] for robot in robots],
-    [np.asarray((r * np.cos((2* np.pi / n) * i + (np.pi)), r * np.sin((2* np.pi / n) * i + (np.pi)), (1 if np.random.rand() >= 0.5 else -1) * np.random.rand()/20 )) for i in range(n)]
+    [np.asarray((r * np.cos((2* np.pi / n) * i + (np.pi)), r * np.sin((2* np.pi / n) * i + (np.pi)), (1 if np.random.rand() >= 0.5 else -1) * np.random.rand()/50 )) for i in range(n)]
     )
 )
 
@@ -72,6 +72,14 @@ for robot in robots:
         bindings[robot["name"]]["actuators"]["force_y"],
         bindings[robot["name"]]["actuators"]["force_z"]
     )
+
+
+constraint_plotter = SHConstraintPlotter(
+    n=sh_n,
+    gamma=100.0,
+    beta=0.0,
+    plot_every=5,
+)
 
 DT = m.opt.timestep
 
@@ -251,13 +259,7 @@ try:
                 target=targets[robot["name"]],
                 initial_state=initial_state,
                 collision_radius=collision_radius,
-                obstacles=get_collision_spheres(robot["name"]),
-
-                # Index in jax.devices("gpu")
-                device_id=0,
-
-                profile=True,
-                profile_every=1,
+                obstacles=get_collision_spheres(robot["name"])
             )
 
             controller.set_max_accel(max_accel)
@@ -330,11 +332,9 @@ try:
                 controller.update_obstacles(
                     get_collision_spheres([robot["name"]])
                 )
-    
-                acceleration_command = np.asarray(
-                    controller.compute_command(),
-                    dtype=float,
-                )
+
+                acceleration_command, obstacles_boundaries = controller.compute_command()
+                acceleration_command = np.asarray(acceleration_command, dtype=float)
 
                 state[robot["name"]]["command"] = acceleration_command
         
@@ -347,6 +347,18 @@ try:
                 d.ctrl[robots_actuators[robot["name"]][2]] = acceleration_command[2]
 
                 controller.increment_step()
+
+                if(robot["name"] == robots[0]["name"]):
+                    constraint_plotter.update(
+                        robot_name=robot["name"],
+                        robot_state=robot_state,
+                        obstacle_states=get_collision_spheres([robot["name"]]),
+                        boundaries=obstacles_boundaries,
+                        acceleration_command=acceleration_command,
+                        dt=DT,
+                    )
+
+                
           
 
             # ----------------------------------------------------------
@@ -435,9 +447,6 @@ try:
             #
             # if remaining_time > 0.0:
             #     time.sleep(remaining_time)
-except:
-    print("Error")
-    
 finally:
     # if controller is not None:
     #     controller.stop()

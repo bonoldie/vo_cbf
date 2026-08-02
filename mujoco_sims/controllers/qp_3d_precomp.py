@@ -259,6 +259,8 @@ class QP3DPPrecomp:
 
         constraint_start_time = time.time()
 
+        obstacles_boundaries = {}
+
         # -------------------------------------------------
         # CBF constraints - 3D SH
         # -------------------------------------------------
@@ -292,6 +294,13 @@ class QP3DPPrecomp:
                 n=self.sh_n,
                 tau=self.sh_tau
             )
+
+            obstacles_boundaries[obstacle_name] = {
+                "a": a,
+                "b": b,
+                "h_value": h_value, 
+                "grad_h_value": grad_h_value
+            }
 
             class_k = class_K_function(h_value, gamma=100.0, beta=0)
 
@@ -399,4 +408,4 @@ class QP3DPPrecomp:
                 f"acc_cmd={' '.join(f'{a:3.6f}' for a in self.cmd_accel)}"
             )
 
-        return self.cmd_accel
+        return self.cmd_accel, obstacles_boundaries
