@@ -8,6 +8,7 @@ from pathlib import Path
 import cv2 as cv2
 import os
 from sh_constraint_plotter import SHConstraintPlotter
+from relative_distance_plotter import RelativeDistancePlotter
 
 from generate_scenarios import buildModel, format_obstacles
 from utils.playback import Playback
@@ -35,8 +36,8 @@ controllers = []
 # Scenario
 obstacles = [] 
 
-r = 1
-n = 5
+r = 0.8
+n = 7
 
 robots = [
     {
@@ -80,6 +81,17 @@ constraint_plotter = SHConstraintPlotter(
     beta=0.0,
     plot_every=5,
 )
+
+relative_distance_plotter = RelativeDistancePlotter(
+    reference_robot=robots[0]["name"],
+    output_directory="relative_distance_results",
+    plot_every=2,
+    save_every=100,
+)
+
+robot_collision_radii = {
+    robot["name"]: robot["collision_radius"] for robot in robots
+}
 
 DT = m.opt.timestep
 
@@ -348,7 +360,7 @@ try:
 
                 controller.increment_step()
 
-                if(robot["name"] == robots[0]["name"]):
+                if(robot["name"] == robots[0]["name"]) and False:
                     constraint_plotter.update(
                         robot_name=robot["name"],
                         robot_state=robot_state,
@@ -358,8 +370,13 @@ try:
                         dt=DT,
                     )
 
-                
+            relative_distance_plotter.update(
+                simulation_time=float(d.time),
+                state=state,
+                collision_radii=robot_collision_radii,
+            )
           
+            # print(state)
 
             # ----------------------------------------------------------
             # Interactive viewer visualization
@@ -452,7 +469,7 @@ finally:
     #     controller.stop()
 
     renderer.close()
-
+    relative_distance_plotter.close()
 
 # ======================================================================
 # Save and display video

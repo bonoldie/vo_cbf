@@ -67,6 +67,7 @@ class QP3DPPrecomp:
         sh_tau=1.2,
         collision_radius=0.5,
         obstacles=[],
+        radius_tollerance = 0.01,
     ):
         self.step = 0
         self.target = target
@@ -76,7 +77,7 @@ class QP3DPPrecomp:
         self.sh_n = sh_n
         self.sh_tau = sh_tau
         self.collision_radius = collision_radius
-
+        self.radius_tollerance = radius_tollerance
         # commanded [ax, ay, az]
         self.cmd_accel = np.zeros(3)
 
@@ -289,7 +290,7 @@ class QP3DPPrecomp:
             b, a, vy_tan, h_value, grad_h_value = compute_and_eval_h_and_grad(
                 robot_state=self.state,
                 obstacle_state=cbf_obstacle_state,
-                robot_radius=self.collision_radius,
+                robot_radius=self.collision_radius + self.radius_tollerance,
                 obstacle_radius=obstacle['collision_radius'],
                 n=self.sh_n,
                 tau=self.sh_tau

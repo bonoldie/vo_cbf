@@ -120,8 +120,9 @@ def compute_sh_a(
     return (d - R) / tau
 
 
+
 @partial(jax.jit, static_argnames=("n", "num_iters"))
-def get_tangency_error(b, a, n, d, r, num_iters=80):
+def get_tangency_error_jax(b, a, n, d, r, num_iters=80):
     """
     JAX equivalent of MATLAB:
 
@@ -178,6 +179,20 @@ def get_tangency_error(b, a, n, d, r, num_iters=80):
     return jnp.sqrt(min_dist_sq) - r
 
 
+def get_tangency_error(b, a, n, d, r):
+    def dist_sq(x):
+        y = a * (1.0 + (x / b) ** n) ** (1.0 / n)
+        return x**2 + (y - d) ** 2
+
+    result = optimize.minimize_scalar(
+        dist_sq,
+        bounds=(0.0, r),
+        method="bounded",
+    )
+
+    return np.sqrt(result.fun) - r
+
+
 @partial(jax.jit, static_argnames=("n",))
 def compute_sh_b(
     robot_state: jnp.ndarray,
@@ -213,7 +228,7 @@ def compute_sh_b(
     def root_fun_normalized(s, a, d, R, b_lower, b_upper):
         b_guess = b_lower + s * (b_upper - b_lower)
 
-        return get_tangency_error(
+        return get_tangency_error_jax(
             b_guess,
             a,
             n,
@@ -348,7 +363,7 @@ def compute_and_eval_h_and_grad(
     Computes and evaluates the values of the CBF and its gradient (using the explicit form found with matlab)  
     """
     dtype = robot_state.dtype
-    eps = np.asarray(1e-6, dtype=dtype)
+    eps = np.asarray(1e-8, dtype=dtype)
 
     R = robot_radius + obstacle_radius
     p_robot = robot_state[:3]
@@ -367,15 +382,25 @@ def compute_and_eval_h_and_grad(
     D_term = distance**2 - R**2 - a**2
     inner_term = np.maximum(0.0,D_term**2 - 4.0 * a**2 * R**2)
     
-    b_2 = np.sqrt(0.5 * (D_term - np.sqrt(inner_term)))
+    b_2 = np.sqrt(0.5 * (D_term - np.sqrt(inner_term) + eps))
     
     b_lower = np.array(1e-10, dtype=np.float64)
     b_upper = b_2 * 10.0
 
-
     # This solver select the scale factor s s.t. b =  b_lower + s_star * (b_upper - b_lower) minimize the get_tangency_error
-    b_root_fun_normalized = lambda s: get_tangency_error(b_lower + s * (b_upper - b_lower), a, n, distance, R)
-    s_star = optimize.bisect(b_root_fun_normalized, 0.0, 1.0, maxiter=50, rtol=1e-8)
+    b_root_fun_normalized = lambda s: get_tangency_error(b_lower + s * (b_upper - b_lower), a, n, distance, R) 
+
+    result = optimize.minimize_scalar(
+        lambda s: np.abs(b_root_fun_normalized(s)),
+        bounds=(0.0, 1.0),
+        method="bounded",
+        options={
+            "xatol": 1e-10,
+            "maxiter": 100,
+        },
+    )
+
+    s_star = result.x
     b = b_lower + s_star * (b_upper - b_lower)
 
     vy_tan_func = lambda vy_tan: distance*(vy_tan**n) - (distance**2 - R**2) * vy_tan ** (n - 1) - (a**n) * vy_tan + distance*(a**n)
