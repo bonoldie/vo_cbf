@@ -3,7 +3,6 @@ import csv
 import numpy as np
 import mujoco
 import mujoco.viewer
-import mediapy as media
 from pathlib import Path
 import cv2 as cv2
 import os
