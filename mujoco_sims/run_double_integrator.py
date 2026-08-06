@@ -18,7 +18,7 @@ from utils.utils import (
     get_3d_velocity
 )
 
-from controllers.qp_3d_precomp import QP3DPPrecomp
+from controllers.qp_3d_precomp import QP3DPrecomp
 
 # --------------------------------------------------
 # Scenario
@@ -283,7 +283,7 @@ try:
         # Simulation setup
         # --------------------------------------------------------------
 
-        pb = Playback()
+        # pb = Playback()
         step = 0
         real_start_time = time.time()
 
@@ -309,7 +309,7 @@ try:
             dtype=float,
         )
 
-        controller = QP3DPPrecomp(
+        controller = QP3DPrecomp(
             dt=DT,
             target=target,
             initial_state=initial_state,
@@ -335,13 +335,12 @@ try:
             # Playback control
             # ----------------------------------------------------------
 
-            if pb.step > 0:
-                pb.step -= 1
-
-            elif pb.paused:
-                viewer.sync()
-                time.sleep(0.05)
-                continue
+            # if pb.step > 0:
+            #     pb.step -= 1
+            # elif pb.paused:
+            #     viewer.sync()
+            #     time.sleep(0.05)
+            #     continue
 
             # ----------------------------------------------------------
             # Read robot state
@@ -379,8 +378,10 @@ try:
                 get_collision_spheres(["robot1"])
             )
 
+            acceleration_command, obstacles_boundaries = controller.compute_command()
+
             acceleration_command = np.asarray(
-                controller.compute_command(),
+                acceleration_command,
                 dtype=float,
             )
 
@@ -408,9 +409,9 @@ try:
                     robot_state=robot_state,
                     acceleration_command=acceleration_command,
                     current_target=target,
-                    show_collision_spheres=(
-                        pb.show_obstacles_collision_boxes
-                    ),
+                    show_collision_spheres=(True)
+                    #     #pb.show_obstacles_collision_boxes
+                    # ),
                 )
 
             # ----------------------------------------------------------
@@ -437,9 +438,10 @@ try:
                     robot_state=robot_state,
                     acceleration_command=acceleration_command,
                     current_target=target,
-                    show_collision_spheres=(
-                        pb.show_obstacles_collision_boxes
-                    ),
+                    show_collision_spheres=(False)
+                    # show_collision_spheres=(
+                    #     pb.show_obstacles_collision_boxes
+                    # ),
                 )
 
                 frame = renderer.render()

@@ -18,16 +18,17 @@ from utils.utils import (
     get_3d_site_position,
     get_3d_velocity,
     get_3d_orientation,
-    get_3d_angular_velocity
+    get_3d_angular_velocity,
+    get_mass,
+    get_inertia
 )
 
-from controllers.qp_3d import QP3D
+from controllers.qp_3d_precomp_drone import QP3DPrecompDrone
 
 # --------------------------------------------------
 # Scenario
 # --------------------------------------------------
-target_position = np.array([4.0, 4.0, 3.8])
-target_heading = np.array([1.0, 0.0, 0.0])
+target = np.array([0.0, 0.0, 1.0])
 
 # SH params
 sh_n = 6
@@ -43,7 +44,7 @@ controller = None
 target_side = 1
 
 def generate_new_target(margin=0.5):
-    global target_position, target_heading, target_side, controller, obstacles
+    global target, target_heading, target_side, controller, obstacles
 
     obstacle_positions = np.asarray(
         [obstacle["pos"] for obstacle in obstacles],
@@ -60,7 +61,7 @@ def generate_new_target(margin=0.5):
 
     target_side *= -1
 
-    target_position = np.array(
+    target = np.array(
         [
             target_x,
             np.random.uniform(cloud_min[1], cloud_max[1]),
@@ -120,7 +121,7 @@ def generate_obstacles(
 
     return obstacles
 
-def get_state(d, robot_body_id):
+def get_drone_state(d, robot_body_id):
     x0, y0, z0 = get_3d_position(
         d,
         robot_body_id,
@@ -143,8 +144,8 @@ def get_state(d, robot_body_id):
 
     return np.concatenate((
         np.array([x0, y0, z0], dtype=float),
-        np.asarray(R0, dtype=float).reshape(-1),
         np.array([vx0, vy0, vz0], dtype=float),
+        np.asarray(R0, dtype=float).reshape(-1),
         np.array([omegax0, omegay0, omegaz0], dtype=float),
     ))
 
@@ -157,7 +158,7 @@ obstacles = generate_obstacles(
     seed=44,
 )
 
-# obstacles = []
+obstacles = []
 
 m, d, bindings, get_collision_spheres = buildModel(
     [
@@ -166,13 +167,14 @@ m, d, bindings, get_collision_spheres = buildModel(
             "collision_radius": collision_radius,
             "pos": (0, 0, 0),
             "robot_path": "scenarios/drone/skydio_x2.xml"
-        },
-        {
-                    "name": "robot2",
-                    "collision_radius": collision_radius,
-                    "pos": (0, 0, 2),
-                    "robot_path": "scenarios/drone/skydio_x2.xml"
-                }
+        }
+        # ,
+        # {
+        #             "name": "robot2",
+        #             "collision_radius": collision_radius,
+        #             "pos": (0, 0, 2),
+        #             "robot_path": "scenarios/drone/skydio_x2.xml"
+        #         }
     ],
     obstacles,
     base_path="scenarios/drone/base.xml",
@@ -187,6 +189,31 @@ actuator_thrust1 = bindings["robot1"]["actuators"]["thrust1"]
 actuator_thrust2 = bindings["robot1"]["actuators"]["thrust2"]
 actuator_thrust3 = bindings["robot1"]["actuators"]["thrust3"]
 actuator_thrust4 = bindings["robot1"]["actuators"]["thrust4"]
+
+mass = get_mass(m, bindings["robot1"]["bodies"]["skydio_x2"])
+inertia = get_inertia(m, bindings["robot1"]["bodies"]["skydio_x2"])
+# rotor distance
+D = 0.23345235059857505
+
+thrusts_to_T_M = np.array((
+    ( 1, 1,  1, 1 ),
+    ( 0, -D, 0, D ),
+    ( D, 0, -D, 0 ),
+    ( -1, 1,-1, 1 ))
+,dtype=float)
+
+T_M_to_thrusts = np.linalg.pinv(thrusts_to_T_M)
+
+def map_T_M_to_thrusts(T: float, M: np.ndarray):
+    return  T_M_to_thrusts @ np.concatenate((np.asarray([T], dtype=float), M))
+
+
+def map_thrusts_to_T_M(thrusts: np.ndarray):
+    T_M = thrusts_to_T_M @ thrusts
+    
+    return T_M[0], T_M[1:]
+     
+
 
 DT = m.opt.timestep
 
@@ -237,9 +264,9 @@ def draw_custom_geometries(
     show_collision_spheres,
 ):
     position = robot_state[:3]
-    drone_orientation = robot_state[3:12].reshape(3,3)
+    drone_orientation = robot_state[6:15].reshape(3,3)
     thrusts_norm = np.linalg.norm(thrust_commands)
-    speed = np.linalg.norm(robot_state[12:15])
+    speed = np.linalg.norm(robot_state[3:6])
     arrow_length = 0.15
 
     # Acceleration command arrow.
@@ -269,17 +296,17 @@ def draw_custom_geometries(
     # Target
     draw_sphere(
         scene,
-        np.asarray(target_position),
+        np.asarray(target),
         (0.0, 1.0, 0.0, 1.0),
         0.06,
     )
 
-    draw_vector(
-        scene,
-        np.asarray(target_position),
-        target_heading * arrow_length * 2,
-        [0.2, 1.0, 0.2, 0.8],
-    )
+    #draw_vector(
+    #    scene,
+    #    np.asarray(target),
+    #    target_heading * arrow_length * 2,
+    #    [0.2, 1.0, 0.2, 0.8],
+    # )
 
     # Collision spheres.
     if show_collision_spheres:
@@ -320,25 +347,27 @@ try:
         # Simulation setup
         # --------------------------------------------------------------
 
-        # pb = Playback()
+        pb = Playback()
         step = 0
         real_start_time = time.time()
 
-        initial_state = get_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
+        initial_state = get_drone_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
 
-        # controller = QP3D(
-        #     dt=DT,
-        #     target=target,
-        #     initial_state=initial_state,
-        #     collision_radius=collision_radius,
-        #     sh_n=sh_n,
-        #     sh_tau=sh_tau,
-        #     obstacles=get_collision_spheres(["skydio_x2"]),
-        # )
+        controller = QP3DPrecompDrone(
+            dt=DT,
+            mass=mass,
+            inertia=np.diag(inertia),
+            target=target,
+            initial_state=initial_state,
+            collision_radius=collision_radius,
+            sh_n=sh_n,
+            sh_tau=sh_tau,
+            obstacles=get_collision_spheres(["robot1"], robot_body_name="skydio_x2")
+        )
 
         # controller.set_max_accel(max_accel)
         # controller.set_reference_speed(ref_speed)
-        generate_new_target() # controller.set_target(target)
+        # generate_new_target() # controller.set_target(target)
 
         # --------------------------------------------------------------
         # Main loop
@@ -352,47 +381,56 @@ try:
             # Playback control
             # ----------------------------------------------------------
 
-            # if pb.step > 0:
-            #     pb.step -= 1
-            # elif pb.paused:
-            #     viewer.sync()
-            #     time.sleep(0.05)
-            #     continue
+            if pb.step > 0:
+                pb.step -= 1
+            elif pb.paused:
+                viewer.sync()
+                time.sleep(0.05)
+                continue
 
             # ----------------------------------------------------------
             # Read robot state
             # ----------------------------------------------------------
 
-            robot_state = get_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
+            robot_state = get_drone_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
 
             # ----------------------------------------------------------
             # Update controller
             # ----------------------------------------------------------
 
-            # controller.update_state(robot_state)
+            controller.update_state(robot_state)
 
-            # controller.update_obstacles(
-            #     get_collision_spheres(["robot1"])
-            # )
+            controller.update_obstacles(
+                get_collision_spheres(["robot1"], robot_body_name="skydio_x2")
+            )
 
-            # force_command = np.asarray(
-            #     controller.compute_command(),
-            #     dtype=float,
-            # )
+            # T is the total thrust
+            # M R(3x1) are the moments 
+            T, M, obstacles_states =  controller.compute_command()
+            
+            
+            control, boundaries, reference_data = controller.compute_command()
 
-            thrust_commands = np.array([2.0,2.0,2.0,2.0]) # np.zeros(4) 
+            thrust_command = control[0]
+            moment_command = np.asarray((control[2], control[1], -control[3]), dtype=float) 
+
+            thrust_commands = map_T_M_to_thrusts(thrust_command, moment_command)
+
+            # thrust_commands = np.array([2.0,2.0,2.0,2.0]) # np.zeros(4) 
 
             # ----------------------------------------------------------
             # Apply control
             # ----------------------------------------------------------
-
+            
+            thrust_commands = np.array([4.0, 3.0, 2.0, 1.0])
+            
             d.ctrl[actuator_thrust1] = thrust_commands[0]
-            d.ctrl[actuator_thrust2] = thrust_commands[1]
+            d.ctrl[actuator_thrust2] = thrust_commands[3]
             d.ctrl[actuator_thrust3] = thrust_commands[2]
-            d.ctrl[actuator_thrust4] = thrust_commands[3]
+            d.ctrl[actuator_thrust4] = thrust_commands[1]
 
             distance_to_target = np.linalg.norm(
-                target_position - robot_state[:3]
+                target - robot_state[:3]
             )
 
             # ----------------------------------------------------------

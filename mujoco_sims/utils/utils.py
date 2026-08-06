@@ -42,6 +42,18 @@ def get_3d_angular_velocity(d, body_id):
     return omega_x, omega_y, omega_z
 
 
+def get_mass(m, body_id):
+    mass = m.body_mass[body_id]
+
+    return mass
+
+
+def get_inertia(m, body_id):
+    inertia = m.body_inertia[body_id]
+
+    return np.asarray(inertia)
+
+
 
 
 def get_v_w(m, d, body_id):
@@ -97,4 +109,50 @@ def draw_sphere(scene, pos, color=(1, 0, 0, 1), size=0.01):
 
     scene.ngeom += 1
 
+def rotation_matrix(axis, angle):
+    """
+    Return a 3x3 rotation matrix.
 
+    Parameters
+    ----------
+    axis : str or array-like
+        Either "x", "y", "z", or a 3D rotation axis.
+    angle : float
+        Rotation angle in radians.
+
+    Returns
+    -------
+    np.ndarray
+        3x3 rotation matrix.
+    """
+    if isinstance(axis, str):
+        axes = {
+            "x": np.array([1.0, 0.0, 0.0]),
+            "y": np.array([0.0, 1.0, 0.0]),
+            "z": np.array([0.0, 0.0, 1.0]),
+        }
+
+        try:
+            axis = axes[axis.lower()]
+        except KeyError:
+            raise ValueError("Axis must be 'x', 'y', 'z', or a 3D vector.")
+    else:
+        axis = np.asarray(axis, dtype=float)
+
+    if axis.shape != (3,):
+        raise ValueError("The rotation axis must be a 3D vector.")
+
+    norm = np.linalg.norm(axis)
+    if norm < 1e-12:
+        raise ValueError("The rotation axis cannot be zero.")
+
+    x, y, z = axis / norm
+    c = np.cos(angle)
+    s = np.sin(angle)
+    C = 1.0 - c
+
+    return np.array([
+        [c + x*x*C,     x*y*C - z*s, x*z*C + y*s],
+        [y*x*C + z*s,   c + y*y*C,   y*z*C - x*s],
+        [z*x*C - y*s,   z*y*C + x*s, c + z*z*C],
+    ])

@@ -9,7 +9,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 
-class QP3DPPrecomp:
+class QP3DPrecomp:
     """
     Solves the simple acceleration ref tracking qp 
 
