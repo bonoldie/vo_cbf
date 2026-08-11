@@ -4,7 +4,6 @@ import csv
 import numpy as np
 import mujoco
 import mujoco.viewer
-import mediapy as media
 from pathlib import Path
 import cv2 as cv2
 import os
@@ -79,43 +78,58 @@ actuator_thrust4 = bindings["robot1"]["actuators"]["thrust4"]
 mass = get_mass(m, bindings["robot1"]["bodies"]["skydio_x2"])
 inertia = get_inertia(m, bindings["robot1"]["bodies"]["skydio_x2"])
 
-# rotor distance
+# # rotor distance
 D = 0.23345235059857505
 
-thrusts_to_T_M = np.array((
-    ( 1, 1,  1, 1 ),
-    ( 0, -D, 0, D ),
-    ( D, 0, -D, 0 ),
-    ( -1, 1,-1, 1 ))
-,dtype=float)
+# thrusts_to_T_M = np.array((
+#     ( 1, 1,  1, 1 ),
+#     ( 0, -D, 0, D ),
+#     ( D, 0, -D, 0 ),
+#     ( -1, 1,-1, 1 ))
+# ,dtype=float)
 
-T_M_to_thrusts = np.linalg.pinv(thrusts_to_T_M)
+# T_M_to_thrusts = np.linalg.pinv(thrusts_to_T_M)
 
-def map_T_M_to_thrusts(T: float, M: np.ndarray):
-    return  T_M_to_thrusts @ np.concatenate((np.asarray([T], dtype=float), M))
+# def map_T_M_to_thrusts(T: float, M: np.ndarray):
+#     return  T_M_to_thrusts @ np.concatenate((np.asarray([T], dtype=float), M))
 
 
-def map_thrusts_to_T_M(thrusts: np.ndarray):
-    T_M = thrusts_to_T_M @ thrusts
+# def map_thrusts_to_T_M(thrusts: np.ndarray):
+#     T_M = thrusts_to_T_M @ thrusts
     
-    return T_M[0], T_M[1:]
+#     return T_M[0], T_M[1:]
 
 
-R1 = rotation_matrix('x', -np.pi)
-R2 = rotation_matrix(R1[:, 2], -np.pi/2)
+#     <geom name="rotor1" class="rotor" pos="-.14 -.18 .05" mass=".25"/>
+#     <geom name="rotor2" class="rotor" pos="-.14 .18 .05" mass=".25"/>
+#     <geom name="rotor3" class="rotor" pos=".14 .18 .08" mass=".25"/>
+#     <geom name="rotor4" class="rotor" pos=".14 -.18 .08" mass=".25"/>
 
-sim_world_to_control_world = R1 @ R2
+rotors_positions_wrt_body = [
+    np.asarray((-0.14, -0.18, 0.05)),
+    np.asarray((-0.14, 0.18, 0.05)),
+    np.asarray((0.14, 0.18, 0.08)),
+    np.asarray((0.14, -0.18, 0.08)),
+]
 
-align_rotors = rotation_matrix(sim_world_to_control_world[:, 2], (3 * np.pi)/4)
-     
-sim_world_to_control_world_with_aligned_rotors =  sim_world_to_control_world @ align_rotors
+
+sim_world_to_control_world = np.array([
+    [0.0, 1.0,  0.0],   # x_control =  y_sim
+    [1.0, 0.0,  0.0],   # y_control =  x_sim
+    [0.0, 0.0, -1.0],   # z_control = -z_sim
+], dtype=float)
+
+align_rotors = rotation_matrix("x", np.pi) @ rotation_matrix("z", (3 * np.pi)/4)
+# align_rotors = np.eye(3)
+# sim_world_to_control_world_with_aligned_rotors = align_rotors @ sim_world_to_control_world
 
 DT = m.opt.timestep
 
 control_world_plot = ControlWorldPlot(
-    sim_world_to_control_world_with_aligned_rotors,
+    align_rotors,
     axis_length=0.5,
     plot_limit=3.0,
+    rotors=rotors_positions_wrt_body
 )
 
 def draw_custom_geometries(
@@ -149,7 +163,7 @@ def draw_custom_geometries(
     draw_vector(    
         scene,
         position,
-        robot_state[12:15] * arrow_length,
+        robot_state[3:6] * arrow_length,
         [0.0, 1.0, 0.0, 0.8],
     )
 
@@ -179,24 +193,20 @@ try:
         show_right_ui=True,
     ) as viewer:
 
-       
         pb = Playback()
         step = 0
-        real_start_time = time.time()
 
-        initial_state = get_drone_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
+        body_id = bindings["robot1"]["bodies"]["skydio_x2"]
 
-        # --------------------------------------------------------------
-        # Main loop
-        # --------------------------------------------------------------
+        mujoco.mj_forward(m, d)
+
+        initial_state = get_drone_state(d, body_id)
+        
+        previous_position_sim = None
+        
 
         while viewer.is_running():
             step_start = time.time()
-
-            # print(viewer.cam)
-            # ----------------------------------------------------------
-            # Playback control
-            # ----------------------------------------------------------
 
             if pb.step > 0:
                 pb.step -= 1
@@ -205,35 +215,24 @@ try:
                 time.sleep(0.05)
                 continue
 
-            # ----------------------------------------------------------
-            # Read robot state
-            # ----------------------------------------------------------
-
-            robot_state = get_drone_state(d, bindings["robot1"]["bodies"]["skydio_x2"])
-
-            thrust_command = 0.0
-            moment_command = np.asarray((0.0, 0.0, 0.0), dtype=float) 
-
-            thrust_commands = map_T_M_to_thrusts(thrust_command, moment_command)
+            # Read state before applying the next command.
+            robot_state = get_drone_state(d, body_id)
             
-            # ----------------------------------------------------------
-            # Apply control
-            # ----------------------------------------------------------
-            
-            thrust_commands = np.array([4.0, 3.0, 2.0, 1.0])
-            
+            # robot_state[6:15] = np.eye(3).reshape(-1)
+
+            thrust_commands = np.array(
+                [1.5, 1.0, 1.0, 1.0],
+                dtype=float,
+            )
+
             d.ctrl[actuator_thrust1] = thrust_commands[0]
             d.ctrl[actuator_thrust2] = thrust_commands[3]
             d.ctrl[actuator_thrust3] = thrust_commands[2]
             d.ctrl[actuator_thrust4] = thrust_commands[1]
-            
-            # ----------------------------------------------------------
-            # Interactive viewer visualization
-            # ----------------------------------------------------------
 
             if step % 5 == 0:
                 control_world_plot.update(robot_state)
-                
+
             with viewer.lock():
                 viewer.user_scn.ngeom = 0
 
@@ -241,27 +240,20 @@ try:
                     scene=viewer.user_scn,
                     robot_state=robot_state,
                     thrust_commands=thrust_commands,
-                    show_collision_spheres= ()
-                    # show_collision_spheres=(
-                    #     pb.show_obstacles_collision_boxes
-                    # ),
+                    show_collision_spheres=False,
                 )
 
-            # ----------------------------------------------------------
-            # Advance simulation
-            # ----------------------------------------------------------
-
             mujoco.mj_step(m, d)
+
+            step += 1
+
             viewer.sync()
 
-           
-            # ----------------------------------------------------------
-            # Optional real-time synchronization
-            # ----------------------------------------------------------
-
             remaining_time = DT - (time.time() - step_start)
+
             if remaining_time > 0.0:
                 time.sleep(remaining_time)
 
-except:
-    print("ERROR")
+except Exception:
+    import traceback
+    traceback.print_exc()
