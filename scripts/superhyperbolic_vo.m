@@ -74,23 +74,28 @@ figure(1);
 clf;
 hold on; grid on;
 
+purple = [.5 0 .5];
+
 % Fill the physical obstacle
 fill(obs_vx, obs_vy, [1, 0.6, 0.6], 'EdgeColor', 'r', 'LineWidth', 1.5, ...
     'DisplayName', 'Physical Obstacle Circle');
 
 plot(vx, vy_vo, '--k', 'LineWidth', 1.5, 'DisplayName', 'Standard VO Cone');
-plot(cap_vx, cap_vy, '--b', 'LineWidth', 1.5, 'DisplayName', 'FVO Time Horizon (\tau) Cap');
+plot(cap_vx, cap_vy, '--', 'Color', purple, 'LineWidth', 1.5, 'DisplayName', 'FVO Time Horizon (\tau) Cap');
+
+cap_lib_approx = vx(a > vy_vo);
+plot([min(cap_lib_approx), max(cap_lib_approx)], [a, a], 'Color', purple, 'LineWidth', 1.0, 'DisplayName', 'FVO Cap Linear Approximation');
 
 % Plot the Standard Hyperbola (n=2)
-plot(vx, vy_hyperbola_n2, '-b', 'LineWidth', 0.2, 'DisplayName', 'Standard Hyperbola (n=2)');
+plot(vx, vy_hyperbola_n2, '-b', 'LineWidth', 1.4, 'DisplayName', 'Standard Hyperbola (n=2)');
 plot([x_tan_n2, -x_tan_n2], [y_tan_n2, y_tan_n2], 'o', 'MarkerEdgeColor', 'b', ...
     'MarkerFaceColor', 'y', 'MarkerSize', 6, 'DisplayName', 'Tangency (n=2)');
 
 % Plot the Super-Hyperbola
-plot(vx, vy_super_hyperbola, '-g', 'LineWidth', 0.6, ...
+plot(vx, vy_super_hyperbola, '-g', 'LineWidth', 1.4, ...
     'DisplayName', sprintf('Proper Super-Hyperbola (n=%d)', n_tune));
 plot([x_tan_super, -x_tan_super], [y_tan_super, y_tan_super], 'o', 'MarkerEdgeColor', 'g', ...
-    'MarkerFaceColor', 'y', 'MarkerSize', 8, 'DisplayName', sprintf('Tangency (n=%d)', n_tune));
+    'MarkerFaceColor', 'y', 'MarkerSize', 6, 'DisplayName', sprintf('Tangency (n=%d)', n_tune));
 
 % Formatting
 xlabel('Lateral Relative Velocity v_x (m/s)', 'FontWeight', 'bold');
@@ -103,7 +108,7 @@ legend('Location', 'southeast', 'FontSize', 10);
 set(gca, 'FontSize', 12);
 hold off;
 
-saveas(gcf,'hyperbolic_vo.eps','epsc')
+saveas(gcf,'hyperbolic_vo.eps', 'epsc');
 
 %% 7. Local Functions for Numerical Optimization
 function err = get_tangency_error(b, a, n, d, r)

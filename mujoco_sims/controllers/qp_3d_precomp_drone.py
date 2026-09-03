@@ -736,4 +736,5 @@ class QP3DPrecompDrone:
             self.command,
             obstacles_boundaries,
             controller_data,
+            control_reference
         )

@@ -408,8 +408,10 @@ class ControlWorldPlot:
         
         # position_control[2] = -position_control[2]
 
-        
-          
+        R_control_body = (
+            self.R_control_sim @
+            R_sim_body
+        )
 
         # ----------------------------------------------------------
         # Robot markers
@@ -445,10 +447,6 @@ class ControlWorldPlot:
         # Rotors
         # ----------------------------------------------------------
         
-        R_control_body = (
-            self.R_control_sim @
-            R_sim_body
-        )
         
         for i, rotor_position in enumerate(self.rotors):    
             sim_rotor_position = position_sim + R_sim_body @ rotor_position

@@ -3,7 +3,6 @@ import csv
 import numpy as np
 import mujoco
 import mujoco.viewer
-import mediapy as media
 from pathlib import Path
 import cv2 as cv2
 import os
@@ -34,6 +33,15 @@ target = np.array([0.0, 0.0, 1.0])
 sh_n = 6
 sh_tau = 1.2
 
+
+
+sim_world_to_control_world = np.array([
+    [-1/np.sqrt(2), -1/np.sqrt(2), 0],   
+    [-1/np.sqrt(2), 1/np.sqrt(2) ,0],   
+    [ 0,  0,  -1.0000],  
+], dtype=float)
+
+
 # Control params
 ref_speed = 0.2
 max_accel = 2.0
@@ -42,6 +50,9 @@ collision_radius = 0.15
 controller = None
 
 target_side = 1
+
+
+
 
 def generate_new_target(margin=0.5):
     global target, target_heading, target_side, controller, obstacles
@@ -143,10 +154,10 @@ def get_drone_state(d, robot_body_id):
         )
 
     return np.concatenate((
-        np.array([x0, y0, z0], dtype=float),
-        np.array([vx0, vy0, vz0], dtype=float),
-        np.asarray(R0, dtype=float).reshape(-1),
-        np.array([omegax0, omegay0, omegaz0], dtype=float),
+        sim_world_to_control_world @ np.array([x0, y0, z0], dtype=float),
+        sim_world_to_control_world @ np.array([vx0, vy0, vz0], dtype=float),
+        np.asarray(sim_world_to_control_world @ R0, dtype=float).reshape(-1),
+        sim_world_to_control_world @ np.array([omegax0, omegay0, omegaz0], dtype=float),
     ))
 
 
@@ -212,7 +223,7 @@ def map_thrusts_to_T_M(thrusts: np.ndarray):
     T_M = thrusts_to_T_M @ thrusts
     
     return T_M[0], T_M[1:]
-     
+
 
 
 DT = m.opt.timestep
@@ -356,8 +367,8 @@ try:
         controller = QP3DPrecompDrone(
             dt=DT,
             mass=mass,
-            inertia=np.diag(inertia),
-            target=target,
+            inertia=sim_world_to_control_world @ np.diag(inertia),
+            target=sim_world_to_control_world @ target,
             initial_state=initial_state,
             collision_radius=collision_radius,
             sh_n=sh_n,
@@ -404,15 +415,12 @@ try:
                 get_collision_spheres(["robot1"], robot_body_name="skydio_x2")
             )
 
-            # T is the total thrust
-            # M R(3x1) are the moments 
-            T, M, obstacles_states =  controller.compute_command()
-            
-            
-            control, boundaries, reference_data = controller.compute_command()
+            # control is the total thrust, control_ref the unmodulated one
+            # M R(3x1) are the moments             
+            control, boundaries, reference_data, control_ref = controller.compute_command()
 
-            thrust_command = control[0]
-            moment_command = np.asarray((control[2], control[1], -control[3]), dtype=float) 
+            thrust_command = control_ref[0]
+            moment_command = np.asarray((control_ref[2], control_ref[1], -control_ref[3]), dtype=float) 
 
             thrust_commands = map_T_M_to_thrusts(thrust_command, moment_command)
 
@@ -422,12 +430,12 @@ try:
             # Apply control
             # ----------------------------------------------------------
             
-            thrust_commands = np.array([4.0, 3.0, 2.0, 1.0])
+            # thrust_commands = np.array([4.0, 3.0, 2.0, 1.0])
             
-            d.ctrl[actuator_thrust1] = thrust_commands[0]
-            d.ctrl[actuator_thrust2] = thrust_commands[3]
-            d.ctrl[actuator_thrust3] = thrust_commands[2]
-            d.ctrl[actuator_thrust4] = thrust_commands[1]
+            d.ctrl[actuator_thrust1] =  thrust_commands[0]
+            d.ctrl[actuator_thrust2] =  thrust_commands[1]
+            d.ctrl[actuator_thrust3] =  thrust_commands[2]
+            d.ctrl[actuator_thrust4] =  thrust_commands[3]
 
             distance_to_target = np.linalg.norm(
                 target - robot_state[:3]
