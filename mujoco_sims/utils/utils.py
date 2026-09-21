@@ -83,17 +83,19 @@ def Rz(v):
 
     return np.eye(3) + s*K + (1-c)*(K@K)
 
-def draw_vector(scene, start, vec, color):
-    geom = scene.geoms[scene.ngeom]
-    mujoco.mjv_initGeom(
-        geom,
-        type=mujoco.mjtGeom.mjGEOM_ARROW,
-        size=[0.005, 0.005, np.linalg.norm(vec)],
-        pos=start,
-        mat=Rz(vec).flatten(),
-        rgba=color
-    )
-    scene.ngeom += 1
+def draw_vector(scene, origin, vec, color):
+    vec = np.asarray(vec, dtype=float).reshape(3)
+    if np.all(np.isfinite(vec)) and np.linalg.norm(vec) > 1e-9: 
+        geom = scene.geoms[scene.ngeom]
+        mujoco.mjv_initGeom(
+            geom,
+            type=mujoco.mjtGeom.mjGEOM_ARROW,
+            size=[0.005, 0.005, np.linalg.norm(vec)],
+            pos=origin,
+            mat=Rz(vec).flatten(),
+            rgba=color
+        )
+        scene.ngeom += 1
 
 def draw_sphere(scene, pos, color=(1, 0, 0, 1), size=0.01):
     geom = scene.geoms[scene.ngeom]
@@ -156,3 +158,17 @@ def rotation_matrix(axis, angle):
         [y*x*C + z*s,   c + y*y*C,   y*z*C - x*s],
         [z*x*C - y*s,   z*y*C + x*s, c + z*z*C],
     ])
+    
+    
+def vee(S):
+    """Convert skew matrix to array"""
+    return np.array([S[2, 1], S[0, 2], S[1, 0]])
+
+def eev(x):
+    """Convert array to skew matrix"""
+    return np.array([
+        [0, -x[2], x[1]],
+        [x[2], 0, -x[0]],
+        [-x[1], x[0], 0]
+    ])
+
