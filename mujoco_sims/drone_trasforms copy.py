@@ -1,19 +1,23 @@
 
 import time
-import csv
 import numpy as np
 import mujoco
 import mujoco.viewer
-from pathlib import Path
-import cv2 as cv2
-import os
 
-from generate_scenarios import buildModel, format_obstacles
+from generate_scenarios import buildModel
 from utils.playback import Playback
-from utils.scenebuilder import ObstacleType
-from utils.utils import *
+from utils.utils import (
+    draw_sphere,
+    draw_vector,
+    get_3d_position,
+    get_3d_site_position,
+    get_3d_velocity,
+    get_3d_orientation,
+    get_3d_angular_velocity,
+    get_mass,
+    get_inertia
+)
 from control_world_plot import ControlWorldPlot
-from controllers.qp_3d_precomp_drone import QP3DPrecompDrone
 
 def get_drone_state(d, robot_body_id):
     x0, y0, z0 = get_3d_position(

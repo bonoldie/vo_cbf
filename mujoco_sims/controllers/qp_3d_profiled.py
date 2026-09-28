@@ -4,13 +4,12 @@ from functools import partial
 from typing import Any
 
 import jax
-import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sparse
 from scipy.interpolate import BPoly
 
-from .sh_cbf_core import compute_candidate_h_3D
+from .sh_cbf_jax import compute_candidate_h
 
 jax.config.update("jax_enable_x64", True)
 
@@ -25,7 +24,7 @@ def _candidate_h_value_and_grad(
     tau: float,
 ):
     """Compute h and dh/d(robot_state) in one compiled execution."""
-    return jax.value_and_grad(compute_candidate_h_3D, argnums=0)(
+    return jax.value_and_grad(compute_candidate_h, argnums=0)(
         robot_state,
         obstacle_state,
         robot_radius,
@@ -46,7 +45,7 @@ def _batched_candidate_h_value_and_grad(
 ):
     """Compute one h value and one robot-state gradient per obstacle."""
     value_and_grad = jax.value_and_grad(
-        compute_candidate_h_3D,
+        compute_candidate_h,
         argnums=0,
     )
 
@@ -149,20 +148,8 @@ class QP3DProfiled:
         self.reference_speed = 0.2
         self.max_accel = 1.0
 
-        # These matrices are tiny and are only used after grad_h is copied to
-        # the host, so keeping them as NumPy arrays avoids extra JAX dispatches.
-        self.F = np.array(
-            [
-                [0, 0, 0, 1, 0, 0],
-                [0, 0, 0, 0, 1, 0],
-                [0, 0, 0, 0, 0, 1],
-                [0, 0, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0],
-                [0, 0, 0, 0, 0, 0],
-            ],
-            dtype=float,
-        )
-
+        # This matrix is tiny and is only used after grad_h is copied to the
+        # host, so keeping it as a NumPy array avoids extra JAX dispatches.
         self.G = np.array(
             [
                 [0, 0, 0],
@@ -338,7 +325,7 @@ class QP3DProfiled:
         print(f"  repetitions: {repetitions}")
 
         start_ns = time.perf_counter_ns()
-        h_first = compute_candidate_h_3D(*args)
+        h_first = compute_candidate_h(*args)
         h_first.block_until_ready()
         first_value_ms = _elapsed_ms(start_ns)
 
@@ -352,7 +339,7 @@ class QP3DProfiled:
 
         for _ in range(repetitions):
             start_ns = time.perf_counter_ns()
-            h = compute_candidate_h_3D(*args)
+            h = compute_candidate_h(*args)
             h.block_until_ready()
             value_samples.append(_elapsed_ms(start_ns))
 
@@ -409,7 +396,7 @@ class QP3DProfiled:
 
         constraint_start_ns = time.perf_counter_ns()
 
-        # Filter obstacles on the host before creating the fixed-size JAX batch.
+        # Collect obstacles on the host before creating the fixed-size JAX batch.
         start_ns = time.perf_counter_ns()
         active_names: list[str] = []
         active_obstacles: list[dict[str, Any]] = []
@@ -422,13 +409,14 @@ class QP3DProfiled:
                 )
             )
 
+            # The constraint is kept when overlapping: the CBF then only
+            # forbids approaching the obstacle (see compute_candidate_h)
             if distance <= (
                 self.collision_radius + float(obstacle["collision_radius"])
             ):
                 print(
-                    f"Skipping {obstacle_name}: distance={distance:.3f}"
+                    f"Overlapping {obstacle_name}: distance={distance:.3f}"
                 )
-                continue
 
             active_names.append(obstacle_name)
             active_obstacles.append(obstacle)
@@ -508,13 +496,15 @@ class QP3DProfiled:
             class_k_values = 100.0 * h_values
             control_rows = gradients @ self.G
 
+            # h depends on p_B - p_A, so L_f h = grad_h[:3] (v_A - v_B) for
+            # obstacles moving at constant velocity
+            relative_velocities = self.state[3:] - obstacle_states_host[:, 3:]
+
             drift_and_class_k = (
                 np.einsum(
-                    "ni,ij,j->n",
-                    gradients,
-                    self.F,
-                    self.state,
-                    optimize=True,
+                    "ni,ni->n",
+                    gradients[:, :3],
+                    relative_velocities,
                 )
                 + class_k_values
             )

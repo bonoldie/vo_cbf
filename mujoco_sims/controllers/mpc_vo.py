@@ -5,7 +5,6 @@ import do_mpc
 import numpy as np
 from casadi import *
 
-from utils.utils import wrap
 
 class MPC_VO:
     """

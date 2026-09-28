@@ -53,8 +53,8 @@ function out = SHVO(d, r, tau, n_tune, doPlot, savePath)
         error('Distance to obstacle d must be strictly greater than safety radius r.');
     end
 
-    if tau < 1.0
-        error('Tau must be >= 1.0 for the hyperbola to wrap the physical obstacle.');
+    if tau <= 0
+        error('Tau must be positive.');
     end
 
     if n_tune <= 2
@@ -72,34 +72,26 @@ function out = SHVO(d, r, tau, n_tune, doPlot, savePath)
     y_cap = d / tau;
     R_cap = r / tau;
 
-    %% Analytical tangent hyperbola, n = 2
+    %% Tangent hyperbola, n = 2
+    % Vertex on the FVO cut-off disk
     a = (d - r) / tau;
 
-    D_term = d^2 - r^2 - a^2;
-    inner_term = max(0, D_term^2 - 4 * a^2 * r^2);
+    % The hyperbola osculates the cut-off disk at the vertex
+    [b_n2, y_tan_n2] = shWidth(a, y_cap, R_cap, 2);
+    x_tan_n2 = sqrt(R_cap^2 - (y_tan_n2 - y_cap)^2);
 
-    b_n2 = sqrt(0.5 * (D_term - sqrt(inner_term)));
+    %% Tangent super-hyperbola
+    % Narrowest super-hyperbola containing the FVO cut-off disk
+    [b_super, y_tan_super] = shWidth(a, y_cap, R_cap, n_tune);
+    x_tan_super = sqrt(R_cap^2 - (y_tan_super - y_cap)^2);
 
-    y_tan_n2 = d / (1 + (b_n2 / a)^2);
-    x_tan_n2 = b_n2 * sqrt((y_tan_n2 / a)^2 - 1);
-
-    %% Numerical tangent super-hyperbola
-    options = optimset( ...
-        'Display', 'off', ...
-        'TolX', 1e-8);
-
-    err_func = @(b_guess) getTangencyError(b_guess, a, n_tune, d, r);
-
-    b_super = fzero(err_func, b_n2, options);
-
+    % Minimum distance from the centre of the cut-off disk, equal to R_cap
+    % when the super-hyperbola touches the disk without crossing it
     dist_sq_super = @(x) ...
         x.^2 + ...
-        (a * (1 + (x ./ b_super).^n_tune).^(1 / n_tune) - d).^2;
+        (a * (1 + (x ./ b_super).^n_tune).^(1 / n_tune) - y_cap).^2;
 
-    [x_tan_super, min_dist_sq_super] = fminbnd(dist_sq_super, 0, r);
-
-    y_tan_super = a * ...
-        (1 + (x_tan_super ./ b_super).^n_tune).^(1 / n_tune);
+    [~, min_dist_sq_super] = fminbnd(dist_sq_super, 0, R_cap);
 
     min_dist_super = sqrt(min_dist_sq_super);
 
@@ -149,7 +141,7 @@ function out = SHVO(d, r, tau, n_tune, doPlot, savePath)
     out.superHyperbola.x_tan_super = x_tan_super;
     out.superHyperbola.y_tan_super = y_tan_super;
     out.superHyperbola.min_dist_super = min_dist_super;
-    out.superHyperbola.tangency_error = min_dist_super - r;
+    out.superHyperbola.tangency_error = min_dist_super - R_cap;
 
     out.data.vx = vx;
 
@@ -232,25 +224,30 @@ function out = SHVO(d, r, tau, n_tune, doPlot, savePath)
 end
 
 %% Local helper function
-function err = getTangencyError(b, a, n, d, r)
-%GETTANGENCYERROR Distance error between curve and obstacle circle.
+function [b, y_star] = shWidth(a, d, r, n)
+%SHWIDTH Width of the narrowest super-hyperbola containing a disk.
 %
 % Curve:
-%   y(x) = a * (1 + (x / b)^n)^(1/n)
+%   y(x) = a * (1 + (x / b)^n)^(1/n), with the vertex a on the disk of
+%   centre (0, d) and radius r
 %
-% Tangency condition:
-%   min_x distance((x, y(x)), (0, d)) = r
+% b is the ratio beta(y) of the paper at the tangency ordinate y_star, the
+% root of the tangency polynomial P(y) other than a (Lemma 1)
 
-    if b <= 0 || ~isfinite(b)
-        err = Inf;
+    if n == 2
+        % The hyperbola osculates the disk at the vertex
+        b = sqrt(a * r);
+        y_star = a;
         return;
     end
 
-    dist_sq = @(x) ...
-        x.^2 + ...
-        (a * (1 + (x ./ b).^n).^(1 / n) - d).^2;
+    % P(y) deflated by its root y = a, negative at a and positive at d - r^2/d
+    k = 0:(n - 1);
+    deflatedTangencyPoly = @(y) ...
+        (d + r - y) * y^(n - 1) + ...
+        (y - d) * sum(y.^(n - 1 - k) .* a.^k);
 
-    [~, min_dist_sq] = fminbnd(dist_sq, 0, r);
+    y_star = fzero(deflatedTangencyPoly, [a, d - r^2 / d]);
 
-    err = sqrt(min_dist_sq) - r;
+    b = a * sqrt(r^2 - (y_star - d)^2) / (y_star^n - a^n)^(1 / n);
 end

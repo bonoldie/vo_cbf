@@ -5,9 +5,7 @@ from scipy.interpolate import BPoly
 import osqp
 import time
 import numpy as np
-from utils.utils import *
-import jax
-jax.config.update("jax_enable_x64", True)
+from utils.utils import vee
  
 class QP3DPrecompDrone:
     """
@@ -118,16 +116,7 @@ class QP3DPrecompDrone:
         # Reference speed to track
         self.reference_speed = 0.2
 
-        # Double integrator model
-        self.F = np.array([[
-            0, 0, 0, 1, 0, 0], [
-            0, 0, 0, 0, 1, 0], [
-            0, 0, 0, 0, 0, 1], [
-            0, 0, 0, 0, 0, 0], [
-            0, 0, 0, 0, 0, 0], [
-            0, 0, 0, 0, 0, 0]],
-            dtype=float)
-
+        # Double integrator input matrix
         self.G = np.array([[
             0, 0, 0], [
             0, 0, 0], [
@@ -277,7 +266,7 @@ class QP3DPrecompDrone:
         constraint_rows = [
             np.array([1.0, 0.0, 0.0], dtype=float),
             np.array([0.0, 1.0, 0.0], dtype=float),
-            np.array([0.0, 1.0, 1.0], dtype=float),
+            np.array([0.0, 0.0, 1.0], dtype=float),
         ]
 
         constraint_lower_bounds = [
@@ -304,17 +293,13 @@ class QP3DPrecompDrone:
         for obstacle_name, obstacle in self.obstacles.items():
             obstacle_distance = np.linalg.norm(self.state[:3] - obstacle['p'])
 
-            # This preserves your existing behavior.
-            #
-            # WARNING:
-            # skipping the constraint when already close to an obstacle
-            # may be unsafe. Consider removing this condition.
+            # The constraint is kept when overlapping: the CBF then only
+            # forbids approaching the obstacle (see compute_and_eval_h_and_grad)
             if obstacle_distance <= (self.collision_radius + obstacle['collision_radius']):
                 print(
-                    f"Skipping {obstacle_name}: "
+                    f"Overlapping {obstacle_name}: "
                     f"distance={obstacle_distance:.3f}"
                 )
-                continue
 
             cbf_obstacle_state = np.asarray(
                 np.concatenate((obstacle['p'], obstacle['v'])),
@@ -340,13 +325,12 @@ class QP3DPrecompDrone:
             class_k = class_K_function(h_value, gamma=100.0, beta=0)
 
             # -------------------------------------------------
-            # Original constraint:
+            # CBF constraint, with h depending on p_B - p_A and the
+            # obstacle moving at constant velocity:
             #
-            # -(grad_h F x + grad_h G u + class_k) <= 0
+            # L_f h = grad_h[:3] (v_A - v_B),  L_g h = grad_h G
             #
-            # Equivalent CBF form:
-            #
-            # grad_h G u >= -(grad_h F x + class_k)
+            # L_g h u >= -(L_f h + class_k)
             #
             # OSQP representation:
             #
@@ -354,7 +338,9 @@ class QP3DPrecompDrone:
             # -------------------------------------------------
             control_row = np.asarray(grad_h_value @ self.G, dtype=float).reshape(3)
 
-            drift_and_class_k = float(grad_h_value @ self.F @ self.state + class_k)
+            relative_velocity = self.state[3:] - obstacle['v']
+
+            drift_and_class_k = float(grad_h_value[:3] @ relative_velocity + class_k)
 
             cbf_lower_bound = -drift_and_class_k
 

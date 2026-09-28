@@ -18,14 +18,14 @@ sh = a * (1 + (vx_/b)^n)^(1/n);
 % 1) point lies on superhyperbola
 eq1 = vy_ == sh;
 
-% 2) point lies on circle centered at (0,d)
-eq2 = vx_^2 + (vy_ - d)^2 == r^2;
+% 2) point lies on the FVO cut-off disk, centered at (0,d/tau) with radius r/tau
+eq2 = vx_^2 + (vy_ - d/tau)^2 == (r/tau)^2;
 
 % 3) slope of superhyperbola
 dsh = diff(sh, vx_);
 
 % circle slope (implicit derivative)
-slope_circle = -vx_/(vy_ - d);
+slope_circle = -vx_/(vy_ - d/tau);
 
 % tangency condition
 eq3 = dsh == slope_circle;

@@ -1,354 +1,41 @@
-import jax
-import jax.numpy as jnp
 import numpy as np
-import jaxopt 
-from functools import partial
 from scipy import optimize
 
-from jax import config
-config.update("jax_enable_x64", True)
 
-from .CBFGrad import *
-
+def class_K_function(h, gamma=1.0, beta=1.0):
+    return gamma * h + beta * h**3
 
 
-
-@jax.jit
-def class_K_function(h, gamma=1.0 , beta = 1.0):
-    return gamma * h + beta * jnp.power(h,3)
-
-
-def world_to_obstacle_aligned_frame_3D(
-    robot_state: jnp.ndarray,
-    obstacle_state: jnp.ndarray,
-) -> jnp.ndarray:
+def compute_sh_parameters(ell, R, n, tau):
     """
-    Return a 3x3 rotation matrix R such that:
+    Computes the super-hyperbola parameters fixed by the FVO cut-off disk
+    D(p/tau, R/tau), with ell = ||p|| > R.
 
-        v_local = R @ v_world
-
-    Conventions:
-        - local +y points from the robot to the obstacle;
-        - local +x is perpendicular to local +y and approximately horizontal;
-        - local +z completes a right-handed coordinate frame.
-
-    The first three elements of each state are assumed to be position:
-        state[:3] = [x, y, z]
+    Returns the vertex a, the width b of the narrowest super-hyperbola that
+    contains the disk, the ordinate y_star of the tangency point and db/dell.
     """
-
-    p_robot = robot_state[:3]
-    p_obstacle = obstacle_state[:3]
-
-    eps = 1e-9
-
-    # Local +y axis expressed in world coordinates.
-    direction = p_obstacle - p_robot
-    distance = jnp.linalg.norm(direction)
-
-    # The aligned frame is undefined when both positions coincide.
-    # Use world +y as a deterministic fallback.
-    e_y = jnp.where(
-        distance > eps,
-        direction / jnp.maximum(distance, eps),
-        jnp.array([0.0, 1.0, 0.0]),
-    )
-
-    world_z = jnp.array([0.0, 0.0, 1.0])
-    world_x = jnp.array([1.0, 0.0, 0.0])
-
-    # When e_y is nearly parallel to world_z, use world_x instead
-    # to avoid a near-zero cross product.
-    reference_axis = jnp.where(
-        jnp.abs(jnp.dot(e_y, world_z)) > 0.99,
-        world_x,
-        world_z,
-    )
-
-    # local +x, expressed in world coordinates
-    e_x = jnp.cross(e_y, reference_axis)
-    e_x = e_x / (jnp.linalg.norm(e_x) + eps)
-
-    # Complete the right-handed frame: e_x × e_y = e_z
-    e_z = jnp.cross(e_x, e_y)
-    e_z = e_z / (jnp.linalg.norm(e_z) + eps)
-
-    # Rows are local basis vectors expressed in world coordinates.
-    R_world_to_local = jnp.stack([e_x, e_y, e_z], axis=0)
-
-    return R_world_to_local
-
-def world_to_obstacle_aligned_frame(robot_state, obstacle_state):
-    """
-    Returns R such that:
-
-        v_local = R @ v_world
-
-    local y-axis points from robot to obstacle.
-    local x-axis is perpendicular to local y-axis.
-    """
-
-    p_robot = robot_state[:2]
-    p_obstacle = obstacle_state[:2]
-
-    # local +y axis in world coordinates: robot -> obstacle
-    e_y = p_obstacle - p_robot
-    e_y = e_y / (jnp.linalg.norm(e_y) + 1e-9)
-
-    # local +x axis in world coordinates
-    # This is +90 deg rotated from e_y depending on convention
-    e_x = jnp.array([e_y[1], -e_y[0]])
-
-    # Rows are local basis vectors expressed in world frame
-    R_world_to_local = jnp.stack([e_x, e_y], axis=0)
-
-    return R_world_to_local
-
-@jax.jit
-def compute_sh_a(
-    robot_state: jnp.ndarray,
-    obstacle_state: jnp.ndarray,
-    robot_radius: float,
-    obstacle_radius: float,
-    tau: float,
-):
-    """
-    Compute the a parameter of the super-hyperbola.
-    """
-    R = robot_radius + obstacle_radius
-    d = jnp.linalg.norm(robot_state[:2] - obstacle_state[:2])
-
-    return (d - R) / tau
-
-
-
-@partial(jax.jit, static_argnames=("n", "num_iters"))
-def get_tangency_error_jax(b, a, n, d, r, num_iters=80):
-    """
-    JAX equivalent of MATLAB:
-
-        dist_sq = @(x) x.^2 + (a * (1 + (x./b).^n).^(1/n) - d).^2;
-        [~, min_dist_sq] = fminbnd(dist_sq, 0, r);
-        err = sqrt(min_dist_sq) - r;
-
-    Uses fixed-iteration golden-section search on x in [0, r].
-    """
-
-    def dist_sq(x):
-        y = a * (1.0 + (x / b) ** n) ** (1.0 / n)
-        return x**2 + (y - d) ** 2
-
-    # Golden-section search constants
-    golden_ratio = (1.0 + jnp.sqrt(5.0)) / 2.0
-    inv_golden = 1.0 / golden_ratio
-
-    lo = jnp.array(0.0, dtype=jnp.float64)
-    hi = r
-
-    c = hi - (hi - lo) * inv_golden
-    e = lo + (hi - lo) * inv_golden
-
-    fc = dist_sq(c)
-    fe = dist_sq(e)
-
-    def body(_, state):
-        lo, hi, c, e, fc, fe = state
-
-        choose_left = fc < fe
-
-        new_lo = jnp.where(choose_left, lo, c)
-        new_hi = jnp.where(choose_left, e, hi)
-
-        new_c = new_hi - (new_hi - new_lo) * inv_golden
-        new_e = new_lo + (new_hi - new_lo) * inv_golden
-
-        new_fc = dist_sq(new_c)
-        new_fe = dist_sq(new_e)
-
-        return new_lo, new_hi, new_c, new_e, new_fc, new_fe
-
-    lo, hi, c, e, fc, fe = jax.lax.fori_loop(
-        0,
-        num_iters,
-        body,
-        (lo, hi, c, e, fc, fe),
-    )
-
-    x_star = 0.5 * (lo + hi)
-    min_dist_sq = dist_sq(x_star)
-
-    return jnp.sqrt(min_dist_sq) - r
-
-
-def get_tangency_error(b, a, n, d, r):
-    def dist_sq(x):
-        y = a * (1.0 + (x / b) ** n) ** (1.0 / n)
-        return x**2 + (y - d) ** 2
-
-    result = optimize.minimize_scalar(
-        dist_sq,
-        bounds=(0.0, r),
-        method="bounded",
-    )
-
-    return np.sqrt(result.fun) - r
-
-
-@partial(jax.jit, static_argnames=("n",))
-def compute_sh_b(
-    robot_state: jnp.ndarray,
-    obstacle_state: jnp.ndarray,
-    robot_radius: float,
-    obstacle_radius: float,
-    n: int,
-    tau: float,
-):
-    """
-    Compute b parameter of the super-hyperbola using Bisection (see jaxopt).
-    """
-
-    R = robot_radius + obstacle_radius
-    d = jnp.linalg.norm(robot_state[:2] - obstacle_state[:2])
-
-    a = compute_sh_a(
-        robot_state,
-        obstacle_state,
-        robot_radius,
-        obstacle_radius,
-        tau,
-    )
-
-    D_term = d**2 - R**2 - a**2
-    inner_term = jnp.maximum(0.0,D_term**2 - 4.0 * a**2 * R**2)
-
-    b_2 = jnp.sqrt(0.5 * (D_term - jnp.sqrt(inner_term)))
-
-    b_lower = jnp.array(1e-10, dtype=jnp.float64)
-    b_upper = b_2 * 10.0
-
-    def root_fun_normalized(s, a, d, R, b_lower, b_upper):
-        b_guess = b_lower + s * (b_upper - b_lower)
-
-        return get_tangency_error_jax(
-            b_guess,
-            a,
-            n,
-            d,
-            R,
-        )
-
-    # This solver select the scale factor s s.t. b =  b_lower + s_star * (b_upper - b_lower) minimize the get_tangency_error
-    solver = jaxopt.Bisection(optimality_fun=root_fun_normalized, lower=0.0, upper=1.0, maxiter=30, tol=1e-6, check_bracket=False)
-
-    out = solver.run(
-        a=a,
-        d=d,
-        R=R,
-        b_lower=b_lower,
-        b_upper=b_upper,
-    )
-
-
-    s_star = out.params
-    b_star = b_lower + s_star * (b_upper - b_lower)
-
-    return b_star
-
-
-
-@partial(jax.jit, static_argnames=("n",))
-def compute_candidate_h(
-    robot_state: jnp.ndarray,
-    obstacle_state: jnp.ndarray,
-    robot_radius: float,
-    obstacle_radius: float,
-    n: int,
-    tau: float): 
-
-    a = compute_sh_a(robot_state, obstacle_state, robot_radius, obstacle_radius, tau)
-    b = compute_sh_b(robot_state, obstacle_state, robot_radius, obstacle_radius, n, tau)
-
-    vrel = robot_state[2:] - obstacle_state[2:]
-
-    R_world_to_local = world_to_obstacle_aligned_frame(robot_state=robot_state, obstacle_state=obstacle_state)
-
-    vrel_local = R_world_to_local @ vrel
-
-    return a * (1 + (vrel_local[0]/b)**n)**(1/n) - vrel_local[1]
-
-
-@partial(jax.jit, static_argnames=("n",))
-def compute_candidate_h_3D(
-    robot_state: jnp.ndarray,
-    obstacle_state: jnp.ndarray,
-    robot_radius: float,
-    obstacle_radius: float,
-    n: int,
-    tau: float,
-):
-    dtype = robot_state.dtype
-    eps = jnp.asarray(1e-6, dtype=dtype)
-
-    p_robot = robot_state[:3]
-    v_robot = robot_state[3:]
-
-    p_obstacle = obstacle_state[:3]
-    v_obstacle = obstacle_state[3:]
-
-    # Robot -> obstacle direction
-    delta_p = p_obstacle - p_robot
-
-    # Smooth norm: derivative is finite even at delta_p == 0
-    distance = jnp.sqrt(jnp.dot(delta_p, delta_p) + eps**2)
-
-    e_los = delta_p / distance
-
-    vrel = v_robot - v_obstacle
-
-    # Relative velocity along robot -> obstacle direction
-    v_parallel = jnp.dot(vrel, e_los)
-
-    # Relative velocity perpendicular to line of sight
-    v_perpendicular = vrel - v_parallel * e_los
-
-    # Smooth perpendicular speed
-    v_tangential = (
-        jnp.sqrt(
-            jnp.dot(v_perpendicular, v_perpendicular) + eps**2
-        )
-        - eps
-    )
-
-    robot_state_local = jnp.zeros((2,), dtype=dtype)
-
-    obstacle_state_local = jnp.stack(
-        (
-            jnp.asarray(0.0, dtype=dtype),
-            distance,
-        )
-    )
-
-    a = compute_sh_a(
-        robot_state_local,
-        obstacle_state_local,
-        robot_radius,
-        obstacle_radius,
-        tau,
-    )
-
-    b = compute_sh_b(
-        robot_state_local,
-        obstacle_state_local,
-        robot_radius,
-        obstacle_radius,
-        n,
-        tau,
-    )
-
-    return (
-        a
-        * (1.0 + (v_tangential / b) ** n) ** (1.0 / n)
-        - v_parallel
-    )
+    d = ell / tau
+    r = R / tau
+    a = d - r
+
+    if n == 2:
+        # The hyperbola osculates the disk at the vertex
+        b = np.sqrt(a * r)
+        return a, b, a, b / (2.0 * a * tau)
+
+    # Tangency polynomial P(y) deflated by its root y = a. By Lemma 1 the other
+    # positive root is simple and lies in (a, d - r^2/d), where the deflated
+    # polynomial goes from negative to positive.
+    def deflated_tangency_poly(y):
+        s = sum(y**(n - 1 - k) * a**k for k in range(n))  # (y^n - a^n) / (y - a)
+        return (d + r - y) * y**(n - 1) + (y - d) * s
+
+    y_star = optimize.brentq(deflated_tangency_poly, a, d - r**2 / d, xtol=1e-14)
+
+    b = a * np.sqrt(r**2 - (y_star - d)**2) / (y_star**n - a**n)**(1.0 / n)
+    db = b / tau * (1.0 / a - (y_star**(n - 1) - a**(n - 1)) / (y_star**n - a**n))
+
+    return a, b, y_star, db
 
 
 def compute_and_eval_h_and_grad(
@@ -360,98 +47,57 @@ def compute_and_eval_h_and_grad(
     tau: float,
 ):
     """
-    Computes and evaluates the values of the CBF and its gradient (using the explicit form found with matlab)  
-    """
-    dtype = robot_state.dtype
-    eps = np.asarray(1e-8, dtype=dtype)
+    Computes and evaluates the CBF and its gradient w.r.t. the robot state
+    [p_A, v_A] in closed form. States are [position, velocity], in 2D or 3D.
 
+    h depends on p_B - p_A and v_A - v_B, so for an obstacle moving at
+    constant velocity, with k the dimension of the space:
+
+        L_f h = grad_h[:k] @ (v_A - v_B),    L_g h = grad_h[k:]
+    """
+    if n < 2 or n % 2:
+        raise ValueError(f"n must be an even integer >= 2, got {n}")
+
+    eps = 1e-12
     R = robot_radius + obstacle_radius
-    p_robot = robot_state[:3]
-    p_obstacle = obstacle_state[:3]
-    v_robot = robot_state[3:]
-    v_obstacle = obstacle_state[3:]
+
+    robot_state = np.asarray(robot_state, dtype=float)
+    obstacle_state = np.asarray(obstacle_state, dtype=float)
+    k = robot_state.shape[0] // 2
 
     # Robot -> obstacle direction
-    delta_p = p_obstacle - p_robot
+    delta_p = obstacle_state[:k] - robot_state[:k]
+    ell = np.sqrt(delta_p @ delta_p + eps**2)
+    e_los = delta_p / ell
 
-    # Smooth norm: derivative is finite even at delta_p == 0
-    distance = np.sqrt(np.dot(delta_p, delta_p) + eps**2)
+    v_rel = robot_state[k:] - obstacle_state[k:]
 
-    a = (distance - R) / tau
+    # Relative velocity along and perpendicular to the line of sight
+    v_parallel = v_rel @ e_los
+    v_perpendicular = v_rel - v_parallel * e_los
+    v_tangential_sq = v_perpendicular @ v_perpendicular
 
-    D_term = distance**2 - R**2 - a**2
-    inner_term = np.maximum(0.0,D_term**2 - 4.0 * a**2 * R**2)
-    
-    b_2 = np.sqrt(0.5 * (D_term - np.sqrt(inner_term) + eps))
-    
-    b_lower = np.array(1e-10, dtype=np.float64)
-    b_upper = b_2 * 10.0
+    if ell <= R:
+        # Overlapping: as ell -> R, a and b vanish and the collision set tends
+        # to the half-space v_parallel > 0, so h -> -v_parallel
+        h_value = -v_parallel
+        grad_h_value = np.concatenate((v_perpendicular / ell, -e_los))
+        return 0.0, 0.0, 0.0, h_value, grad_h_value
 
-    # This solver select the scale factor s s.t. b =  b_lower + s_star * (b_upper - b_lower) minimize the get_tangency_error
-    b_root_fun_normalized = lambda s: get_tangency_error(b_lower + s * (b_upper - b_lower), a, n, distance, R) 
+    a, b, y_star, db = compute_sh_parameters(ell, R, n, tau)
 
-    result = optimize.minimize_scalar(
-        lambda s: np.abs(b_root_fun_normalized(s)),
-        bounds=(0.0, 1.0),
-        method="bounded",
-        options={
-            "xatol": 1e-10,
-            "maxiter": 100,
-        },
+    # n is even, so v_t^n = (v_t^2)^(n/2) and h is smooth at v_t = 0
+    v_tangential_n = v_tangential_sq ** (n // 2)
+    phi = a * (1.0 + v_tangential_n / b**n) ** (1.0 / n)
+    gamma = phi * v_tangential_sq ** (n // 2 - 1) / (b**n + v_tangential_n)
+
+    h_value = phi - v_parallel
+
+    # p_A enters through ell (in a and b) and through e_los (in v_r and v_t)
+    grad_p = (
+        -(phi / (a * tau) - gamma * v_tangential_sq * db / b) * e_los
+        + (1.0 + gamma * v_parallel) * v_perpendicular / ell
     )
+    grad_v = gamma * v_perpendicular - e_los
 
-    s_star = result.x
-    b = b_lower + s_star * (b_upper - b_lower)
-
-    vy_tan_func = lambda vy_tan: distance*(vy_tan**n) - (distance**2 - R**2) * vy_tan ** (n - 1) - (a**n) * vy_tan + distance*(a**n)
-    vy_tan = optimize.bisect(vy_tan_func, distance - R, distance + R, maxiter=50, rtol=1e-8)
-
-    e_los = delta_p / distance
-
-    vrel = v_robot - v_obstacle
-
-    # Relative velocity along robot -> obstacle direction
-    v_parallel = np.dot(vrel, e_los)
-
-    # Relative velocity perpendicular to line of sight
-    v_perpendicular = vrel - v_parallel * e_los
-
-    # Smooth perpendicular speed
-    v_tangential = (
-        np.sqrt(
-            np.dot(v_perpendicular, v_perpendicular) + eps**2
-        )
-        - eps
-    )
-
-    h_value = a * (1.0 + (v_tangential / b) ** n) ** (1.0 / n) - v_parallel
-
-    grad_h_value =  np.asarray((
-        CBFGrad3D_1_1(
-            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
-            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
-            b, vy_tan, R, tau, n),
-        CBFGrad3D_2_1(
-            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
-            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
-            b, vy_tan, R, tau, n),
-        CBFGrad3D_3_1(
-            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
-            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
-            b, vy_tan, R, tau, n),
-        CBFGrad3D_4_1(
-            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
-            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
-            b, vy_tan, R, tau, n),
-        CBFGrad3D_5_1(
-            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
-            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
-            b, vy_tan, R, tau, n),
-        CBFGrad3D_6_1(
-            robot_state[0], robot_state[1], robot_state[2], robot_state[3], robot_state[4], robot_state[5],
-            obstacle_state[0], obstacle_state[1], obstacle_state[2], obstacle_state[3], obstacle_state[4], obstacle_state[5],
-            b, vy_tan, R, tau, n)
-        )
-    )
-
-    return b, a, vy_tan, h_value, grad_h_value
+    return b, a, y_star, h_value, np.concatenate((grad_p, grad_v))

@@ -1,5 +1,4 @@
 import time
-import csv
 import numpy as np
 import mujoco
 import mujoco.viewer
@@ -10,8 +9,6 @@ from sh_constraint_plotter import SHConstraintPlotter
 from relative_distance_plotter import RelativeDistancePlotter
 
 from generate_scenarios import buildModel, format_obstacles
-from utils.playback import Playback
-from utils.scenebuilder import ObstacleType
 from utils.utils import (
     draw_sphere,
     draw_vector,
@@ -22,8 +19,8 @@ from utils.utils import (
 from controllers.qp_3d_precomp import QP3DPrecomp
 
 # SH params
-sh_n = 6
-sh_tau = 1.2
+sh_n = 12
+sh_tau = 10.0
 
 # Control params
 ref_speed = 0.2
@@ -269,6 +266,8 @@ try:
                 dt=DT,
                 target=targets[robot["name"]],
                 initial_state=initial_state,
+                sh_n=sh_n,
+                sh_tau=sh_tau,
                 collision_radius=collision_radius,
                 obstacles=get_collision_spheres(robot["name"])
             )

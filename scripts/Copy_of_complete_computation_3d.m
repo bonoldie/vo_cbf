@@ -95,11 +95,15 @@ grad_h = grad_h(x_r, y_r, z_r, vx_r, vy_r, vz_r);
 
 syms vy_tan vy_tan_func(x_r, y_r, z_r, vx_r, vy_r, vz_r);
 
+% Centre and radius of the FVO cut-off disk D(p/tau, R/tau)
+d_tau = d / tau;
+r_tau = R / tau;
+
 % From this we will compute the partial derivatives of vy_tan (P in the
 % paper)
-vy_tan_eq = d*(vy_tan^n) - (d^2 - R^2) * vy_tan ^ (n - 1) - (a^n) * vy_tan + d*(a^n);
+vy_tan_eq = d_tau*(vy_tan^n) - (d_tau^2 - r_tau^2) * vy_tan ^ (n - 1) - (a^n) * vy_tan + d_tau*(a^n);
 
-vx_tan = sqrt(R^2 - (vy_tan_func - d)^2); 
+vx_tan = sqrt(r_tau^2 - (vy_tan_func - d_tau)^2);
 
 b_val = (a * vx_tan) / (vy_tan_func^n - a^n)^(1/n);
 

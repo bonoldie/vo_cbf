@@ -1,14 +1,19 @@
-from .CBFGrad import *
-from .sh_cbf_core import compute_candidate_h_3D, class_K_function, compute_grad_params
+from .sh_cbf_core import class_K_function
+from .sh_cbf_jax import compute_candidate_h
 import matplotlib.pyplot as plt
 import scipy.sparse as sparse
 from scipy.interpolate import BPoly
 import osqp
 import time
 import numpy as np
-import jax.numpy as jnp
 import jax
 jax.config.update("jax_enable_x64", True)
+
+# h and its gradient w.r.t. the robot state, by automatic differentiation
+_candidate_h_value_and_grad = jax.jit(
+    jax.value_and_grad(compute_candidate_h),
+    static_argnames=("n",),
+)
 
 
 class QP3D:
@@ -85,17 +90,8 @@ class QP3D:
         # Reference speed to track
         self.reference_speed = 0.2
 
-        # Double integrator model
-        self.F = jnp.array([[
-            0, 0, 0, 1, 0, 0], [
-            0, 0, 0, 0, 1, 0], [
-            0, 0, 0, 0, 0, 1], [
-            0, 0, 0, 0, 0, 0], [
-            0, 0, 0, 0, 0, 0], [
-            0, 0, 0, 0, 0, 0]],
-            dtype=float)
-
-        self.G = jnp.array([[
+        # Double integrator input matrix
+        self.G = np.array([[
             0, 0, 0], [
             0, 0, 0], [
             0, 0, 0], [
@@ -244,7 +240,7 @@ class QP3D:
         constraint_rows = [
             np.array([1.0, 0.0, 0.0], dtype=float),
             np.array([0.0, 1.0, 0.0], dtype=float),
-            np.array([0.0, 1.0, 1.0], dtype=float),
+            np.array([0.0, 0.0, 1.0], dtype=float),
         ]
 
         constraint_lower_bounds = [
@@ -269,101 +265,40 @@ class QP3D:
         for obstacle_name, obstacle in self.obstacles.items():
             obstacle_distance = np.linalg.norm(self.state[:3] - obstacle['p'])
 
-            # This preserves your existing behavior.
-            #
-            # WARNING:
-            # skipping the constraint when already close to an obstacle
-            # may be unsafe. Consider removing this condition.
+            # The constraint is kept when overlapping: the CBF then only
+            # forbids approaching the obstacle (see compute_candidate_h)
             if obstacle_distance <= (self.collision_radius + obstacle['collision_radius']):
                 print(
-                    f"Skipping {obstacle_name}: "
+                    f"Overlapping {obstacle_name}: "
                     f"distance={obstacle_distance:.3f}"
                 )
-                continue
 
-            cbf_obstacle_state = jnp.asarray(
+            cbf_obstacle_state = np.asarray(
                 np.concatenate((obstacle['p'], obstacle['v'])),
                 dtype=float,
             )
 
-            def h_as_function_of_robot_state(
-                x,
-                obstacle_state=cbf_obstacle_state,
-                n_i=self.sh_n,
-                tau_i=self.sh_tau,
-            ):
-                return compute_candidate_h_3D(
-                    x,
-                    obstacle_state,
-                    self.collision_radius,
-                    obstacle['collision_radius'],
-                    n_i,
-                    tau_i,
-                )
-
-            h_value = h_as_function_of_robot_state(
-                self.state
+            h_value, grad_h = _candidate_h_value_and_grad(
+                self.state,
+                cbf_obstacle_state,
+                self.collision_radius,
+                obstacle['collision_radius'],
+                n=self.sh_n,
+                tau=self.sh_tau,
             )
 
-            grad_h = jax.grad(h_as_function_of_robot_state)(self.state)
-
-            if True:
-                R, b, vy_tan = compute_grad_params(self.state,
-                                                   cbf_obstacle_state,
-                                                   self.collision_radius,
-                                                   obstacle['collision_radius'],
-                                                   n=self.sh_n,
-                                                   tau=self.sh_tau)
-                # Comparing the results from the explicit gradient and the computed one
-                # start = time.time()
-
-                print(f"(self.state[0]: {self.state[0]}, self.state[1]:{self.state[1]}, self.state[2]:{self.state[2]}, self.state[3]:{self.state[3]}, self.state[4]:{self.state[4]}, self.state[5]:{self.state[5]}, cbf_obstacle_state[0]:{cbf_obstacle_state[0]}, cbf_obstacle_state[1]:{cbf_obstacle_state[1]}, cbf_obstacle_state[2]:{cbf_obstacle_state[2]}, cbf_obstacle_state[3]:{cbf_obstacle_state[3]}, cbf_obstacle_state[4]:{cbf_obstacle_state[4]}, cbf_obstacle_state[5]:{cbf_obstacle_state[5]}, b: {b}, vy_tan:{vy_tan}, R:{R}, self.sh_tau:{self.sh_tau}, self.sh_n:{self.sh_n})")
-
-                explicit_grad_h = np.asarray(
-                    (
-                        CBFGrad3D_1_1(
-                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
-                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
-                            b, vy_tan, R, self.sh_tau, self.sh_n),
-                        CBFGrad3D_2_1(
-                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
-                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
-                            b, vy_tan, R, self.sh_tau, self.sh_n),
-                        CBFGrad3D_3_1(
-                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
-                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
-                            b, vy_tan, R, self.sh_tau, self.sh_n),
-                        CBFGrad3D_4_1(
-                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
-                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
-                            b, vy_tan, R, self.sh_tau, self.sh_n),
-                        CBFGrad3D_5_1(
-                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
-                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
-                            b, vy_tan, R, self.sh_tau, self.sh_n),
-                        CBFGrad3D_6_1(
-                            self.state[0], self.state[1], self.state[2], self.state[3], self.state[4], self.state[5],
-                            cbf_obstacle_state[0], cbf_obstacle_state[1], cbf_obstacle_state[2], cbf_obstacle_state[3], cbf_obstacle_state[4], cbf_obstacle_state[5],
-                            b, vy_tan, R, self.sh_tau, self.sh_n)
-                    )
-                )
-
-                # print(f"took {time.time()-start}s")
-                print(f"jax: {grad_h}")
-                print(f"explicit: {explicit_grad_h}")
-
-                grad_h = explicit_grad_h
+            h_value = float(h_value)
+            grad_h = np.asarray(grad_h, dtype=float)
 
             class_k = class_K_function(h_value, gamma=100.0, beta=0)
 
             # -------------------------------------------------
-            # Original constraint:
+            # CBF constraint, with h depending on p_B - p_A and the
+            # obstacle moving at constant velocity:
             #
-            # -(grad_h F x + grad_h G u + class_k) <= 0
+            # L_f h = grad_h[:3] (v_A - v_B),  L_g h = grad_h G
             #
-            # Equivalent CBF form:
-            #
-            # grad_h G u >= -(grad_h F x + class_k)
+            # L_g h u >= -(L_f h + class_k)
             #
             # OSQP representation:
             #
@@ -371,7 +306,9 @@ class QP3D:
             # -------------------------------------------------
             control_row = np.asarray(grad_h @ self.G, dtype=float).reshape(3)
 
-            drift_and_class_k = float(grad_h @ self.F @ self.state + class_k)
+            relative_velocity = self.state[3:] - obstacle['v']
+
+            drift_and_class_k = float(grad_h[:3] @ relative_velocity + class_k)
 
             cbf_lower_bound = -drift_and_class_k
 
