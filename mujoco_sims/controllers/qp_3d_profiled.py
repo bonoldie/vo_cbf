@@ -4,10 +4,8 @@ from functools import partial
 from typing import Any
 
 import jax
-import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sparse
-from scipy.interpolate import BPoly
 
 from .sh_cbf_jax import compute_candidate_h
 
@@ -105,6 +103,8 @@ class QP3DProfiled:
         sh_tau: float = 1.2,
         collision_radius: float = 0.5,
         obstacles: dict[str, dict[str, Any]] | None = None,
+        slowing_distance: float = 0.2,
+        velocity_time_constant: float = 0.5,
         device_id: int = -1,
         profile: bool = False,
         profile_every: int = 1,
@@ -124,6 +124,11 @@ class QP3DProfiled:
         self.sh_tau = float(sh_tau)
         self.collision_radius = float(collision_radius)
         self.obstacles = {} if obstacles is None else obstacles
+
+        # Preferred velocity: reduced within slowing_distance of the target and
+        # tracked with time constant velocity_time_constant
+        self.slowing_distance = slowing_distance
+        self.velocity_time_constant = velocity_time_constant
 
         self.device_id = int(device_id)
         if self.device_id >= 0:
@@ -174,66 +179,6 @@ class QP3DProfiled:
     def _print_stage(name: str, elapsed_ms: float, indent: int = 2) -> None:
         print(f"{' ' * indent}{name:<32} {elapsed_ms:10.3f} ms")
 
-    def setup_plot(self):
-        plt.ion()
-
-        self.traj_fig, self.traj_axes = plt.subplots(
-            3,
-            1,
-            figsize=(9, 8),
-            sharex=True,
-        )
-
-        labels = ["x", "y", "z"]
-        self.position_lines = [
-            self.traj_axes[0].plot([], [], label=label)[0]
-            for label in labels
-        ]
-        self.velocity_lines = [
-            self.traj_axes[1].plot([], [], label=label)[0]
-            for label in labels
-        ]
-        self.acceleration_lines = [
-            self.traj_axes[2].plot([], [], label=label)[0]
-            for label in labels
-        ]
-
-        self.traj_axes[0].set_ylabel("Position [m]")
-        self.traj_axes[1].set_ylabel("Velocity [m/s]")
-        self.traj_axes[2].set_ylabel("Acceleration [m/s²]")
-        self.traj_axes[2].set_xlabel("Time [s]")
-
-        for axis in self.traj_axes:
-            axis.grid(True)
-            axis.legend()
-
-        self.traj_fig.tight_layout()
-
-    def plot_trajectory(self, trajectory: BPoly, T: float) -> None:
-        times = np.linspace(0.0, T, 200)
-        positions = np.asarray(trajectory(times, nu=0), dtype=float)
-        velocities = np.asarray(trajectory(times, nu=1), dtype=float)
-        accelerations = np.asarray(trajectory(times, nu=2), dtype=float)
-
-        for component in range(3):
-            self.position_lines[component].set_data(
-                times, positions[:, component]
-            )
-            self.velocity_lines[component].set_data(
-                times, velocities[:, component]
-            )
-            self.acceleration_lines[component].set_data(
-                times, accelerations[:, component]
-            )
-
-        for axis in self.traj_axes:
-            axis.set_xlim(0.0, T)
-            axis.relim()
-            axis.autoscale_view(scalex=False, scaley=True)
-
-        self.traj_fig.canvas.draw_idle()
-        self.traj_fig.canvas.flush_events()
-
     # ==============================================================
     # UPDATE DATA
     # ==============================================================
@@ -261,27 +206,20 @@ class QP3DProfiled:
     # ==============================================================
 
     def compute_acceleration_reference(self) -> np.ndarray:
+        """
+        Tracks the preferred velocity of the VO paradigm: the direction to the
+        target scaled by the reference speed, reduced linearly within
+        slowing_distance of the target so that the agent stops on it.
+        """
         position = self.state[:3]
         velocity = self.state[3:]
 
         error = self.target - position
-        distance = np.linalg.norm(error)
-        speed = np.linalg.norm(velocity)
-
-        if distance < 0.001 and speed < 0.001:
-            return np.zeros(3, dtype=float)
-
-        T = max(0.5, distance / self.reference_speed)
-
-        trajectory = BPoly.from_derivatives(
-            [0.0, T],
-            [
-                [position, velocity, self.cmd_accel],
-                [self.target, np.zeros(3), np.zeros(3)],
-            ],
+        preferred_velocity = (
+            self.reference_speed * error / max(np.linalg.norm(error), self.slowing_distance)
         )
 
-        return np.asarray(trajectory(self.dt, nu=2), dtype=float)
+        return (preferred_velocity - velocity) / self.velocity_time_constant
 
     # ==============================================================
     # STANDALONE CBF BENCHMARK

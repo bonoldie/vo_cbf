@@ -1,5 +1,7 @@
 videos
 mujoco_sims/assets/robotis_mujoco_menagerie
+mujoco_sims/data/
+mujoco_sims/relative_distance_results/
 
 # Autosave files
 *.asv
