@@ -5,8 +5,7 @@ import do_mpc
 import numpy as np
 from casadi import *
 
-from utils.utils import wrap
-from utils.fsh import FSH
+from .sh_cbf_core import compute_sh_parameters
 
 class MPC_SH:
     """
@@ -26,18 +25,22 @@ class MPC_SH:
         target=np.array([1.0, 1.0]),
         initial_state=np.zeros(3),
         sh_degree=4,
+        sh_tau=1.6,
         obstacles=[],
         robot_radius=0.15,
         speed = 0.25
     ):
 
+        if sh_degree < 2 or sh_degree % 2:
+            raise ValueError(f"sh_degree must be an even integer >= 2, got {sh_degree}")
+
         self.target = target
         self.obs_nl_cons = {}
         self.robot_radius = robot_radius
         self.sh_degree = sh_degree
+        self.sh_tau = sh_tau
 
         self.state_lock = threading.Lock()
-        self.fsh = FSH(robot_radius=self.robot_radius, degree=self.sh_degree, tau = 1.6)
 
         self.state = np.asarray(initial_state, dtype=float)
 
@@ -83,7 +86,7 @@ class MPC_SH:
 
             self.sh_params[obstacle_name] = {'a': 0, 'b': 0}
 
-        self.obstacles = obstacles
+        self.update_obstacles(obstacles)
 
         model.set_rhs("x", v * cos(yaw))
         model.set_rhs("y", v * sin(yaw))
@@ -177,18 +180,20 @@ class MPC_SH:
                 model.p[obs_y] - y
             )
 
-            r_norm = r / norm_2(r)
+            e_los = r / sqrt(dot(r, r) + 1e-12)
 
-            r_perpendicular = vertcat(
-                -r[1],
-                r[0]
-            )
+            # Relative velocity, with the obstacle moving at constant velocity
+            v_rel = v_ - vertcat(model.p[obs_vx], model.p[obs_vy])
 
-            v_y = dot(v_, r_norm)
+            v_parallel = dot(v_rel, e_los)
+            v_perpendicular = v_rel - v_parallel * e_los
 
-            v_x = dot(v_, r_perpendicular)
+            # n is even, so v_t^n = (v_t^2)^(n/2)
+            v_tangential_n = dot(v_perpendicular, v_perpendicular) ** (self.sh_degree // 2)
 
-            vo_sh_constraint = norm_2(v_y) - model.p[obs_sh_a] * ( 1 + fabs(norm_2(v_x) / model.p[obs_sh_b]) ** self.sh_degree) ** (1 / self.sh_degree) 
+            # Relative velocities inside the super-hyperbolic collision set,
+            # v_parallel >= a (1 + (v_t / b)^n)^(1/n), are forbidden
+            vo_sh_constraint = v_parallel - model.p[obs_sh_a] * (1 + v_tangential_n / model.p[obs_sh_b] ** self.sh_degree) ** (1 / self.sh_degree)
 
             self.mpc.set_nl_cons(
                 f"vo_sh_{obstacle_name}",
@@ -278,9 +283,18 @@ class MPC_SH:
         self.obstacles = obstacles
 
         for obstacle_name, obstacle in self.obstacles.items():
-            sh_params = self.fsh.fit(obstacle_pos=obstacle['p'][0:2], obstacle_radius=obstacle["collision_radius"],  robot_pos=self.state[0:2], get_tangency_point=False)
-            self.sh_params[obstacle_name]['a'] = sh_params['a']
-            self.sh_params[obstacle_name]['b'] = sh_params['b']
+            distance = np.linalg.norm(np.asarray(obstacle['p'][0:2]) - self.state[0:2])
+            R = self.robot_radius + obstacle["collision_radius"]
+
+            if distance > R:
+                a, b, _, _ = compute_sh_parameters(distance, R, self.sh_degree, self.sh_tau)
+            else:
+                # Overlapping: the collision set tends to the half-space
+                # v_parallel > 0, whatever the width b
+                a, b = 0.0, 1.0
+
+            self.sh_params[obstacle_name]['a'] = a
+            self.sh_params[obstacle_name]['b'] = b
     
     # ==============================================================
     # GET COMMAND

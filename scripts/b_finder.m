@@ -7,7 +7,8 @@ n = 2;
 
 a = (d - r) / tau;
 
-circle_eq = vx^2 + (vy - d)^2 - r^2;
+% FVO cut-off disk D(p/tau, r/tau)
+circle_eq = vx^2 + (vy - d/tau)^2 - (r/tau)^2;
 sh_eq = (vy/a).^(n) - (vx/b).^(n) - 1;
 
 dcircle_eq = gradient(circle_eq, [vx vy]);
@@ -20,7 +21,7 @@ dsh_eq = gradient(sh_eq, [vx vy]);
 % dsh_eq_vx = diff(sh_eq_vx, vx);
 
 conditions = [ ...
-    tau >= 1;  ...
+    tau > 0;  ...
     r > 0;  ...
     d > r; ...
 ];

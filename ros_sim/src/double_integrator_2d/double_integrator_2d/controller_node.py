@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import rclpy
 from rclpy.node import Node
@@ -19,55 +19,12 @@ import nlopt
 
 from interfaces.srv import GetObstacles
 from scipy.interpolate import CubicHermiteSpline
-from .sh_cbf_core import *
+from .sh_cbf_core import class_K_function, compute_and_eval_h_and_grad
 
 import osqp
 import scipy.sparse as sparse
 
 class ControllerNode(Node):
-
-    def test(self): 
-        # State: [x, y, vx, vy]
-        robot_state = jnp.array([0.5, 0.0, 0.0, 0.0])
-        obstacle_state = jnp.array([2.0, 2.0, 0.0, 0.0])
-
-        robot_radius = 0.2
-        obstacle_radius = 0.2
-
-        tau = 1.5
-        n = 6
-
-        def h_as_function_of_robot_state(x):
-            return compute_candidate_h(
-                x,
-                obstacle_state,
-                robot_radius,
-                obstacle_radius,
-                n,
-                tau,
-            )
-                
-        gradH = jax.grad(h_as_function_of_robot_state)
-
-        # plant EQ
-        u = jnp.array((10.0, 0.0))
-        
-        A = jnp.array(((0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)))
-        G = jnp.array(((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
-
-        #print(f"A: {A}")
-        #print(f"G: {G}")
-        #print(f"gradH(robot_state): {gradH(robot_state)}")
-
-        u_local = u # R_world_to_local @ u
-
-        #print(f"u_local: {u_local}")
-        
-        h_val = class_K_function(h_as_function_of_robot_state(robot_state), gamma=1.0, beta=0)
-        U_cbf = gradH(robot_state) @ A @ robot_state +  gradH(robot_state) @ G @ u_local + h_val
-
-        # print(f"U_cbf: {U_cbf}")
-
 
     # Obstacles definition (loaded via get_obstacles srv)
     obstacles = []
@@ -107,6 +64,10 @@ class ControllerNode(Node):
         self.max_accel = float(self.get_parameter("max_accel").value)
         self.declare_parameter("reference_speed", 0.5)
         self.reference_speed = float(self.get_parameter("reference_speed").value)
+
+        # Gain of the linear class-K function of the CBF [1/s]
+        self.declare_parameter("cbf_gamma", 100.0)
+        self.cbf_gamma = float(self.get_parameter("cbf_gamma").value)
         
         # NLopt params
         self.declare_parameter("nlopt_maxeval", 120)
@@ -130,8 +91,6 @@ class ControllerNode(Node):
 
     def __init__(self):
         super().__init__("controller_node")
-
-        self.test()
 
         self.get_logger().info("Loading parameters.")
         self.load_parameters()
@@ -589,32 +548,9 @@ class ControllerNode(Node):
         q = -u_ref
 
         # -------------------------------------------------
-        # Double-integrator dynamics
-        #
-        # x_dot = F x + G u
+        # Double-integrator state, x = [p, v] and x_dot = [v, u]
         # -------------------------------------------------
-        F = jnp.array(
-            (
-                (0.0, 0.0, 1.0, 0.0),
-                (0.0, 0.0, 0.0, 1.0),
-                (0.0, 0.0, 0.0, 0.0),
-                (0.0, 0.0, 0.0, 0.0),
-            )
-        )
-
-        G = jnp.array(
-            (
-                (0.0, 0.0),
-                (0.0, 0.0),
-                (1.0, 0.0),
-                (0.0, 1.0),
-            )
-        )
-
-        cbf_robot_state = jnp.asarray(
-            np.concatenate((p0, v0)),
-            dtype=float,
-        )
+        cbf_robot_state = np.concatenate((p0, v0))
 
         # -------------------------------------------------
         # OSQP constraints
@@ -669,75 +605,53 @@ class ControllerNode(Node):
 
             obstacle_distance = np.linalg.norm(p0 - p_obs)
 
-            # This preserves your existing behavior.
-            #
-            # WARNING:
-            # skipping the constraint when already close to an obstacle
-            # may be unsafe. Consider removing this condition.
+            # The constraint is kept when overlapping: the CBF then only
+            # forbids approaching the obstacle
             if obstacle_distance <= 0.5:
                 self.get_logger().warning(
-                    f"Skipping {obstacle_name}: "
+                    f"Overlapping {obstacle_name}: "
                     f"distance={obstacle_distance:.3f}"
                 )
-                continue
 
-            cbf_obstacle_state = jnp.asarray(
-                np.concatenate((p_obs, v_obs)),
-                dtype=float,
-            )
+            cbf_obstacle_state = np.concatenate((p_obs, v_obs))
 
             n = 6
             tau = 1.2
 
-            def h_as_function_of_robot_state(
-                x,
+            _, _, _, h_value, grad_h = compute_and_eval_h_and_grad(
+                robot_state=cbf_robot_state,
                 obstacle_state=cbf_obstacle_state,
-                n_i=n,
-                tau_i=tau,
-            ):
-                return compute_candidate_h(
-                    x,
-                    obstacle_state,
-                    0.25,
-                    0.25,
-                    n_i,
-                    tau_i,
-                )
-
-            h_value = h_as_function_of_robot_state(
-                cbf_robot_state
+                robot_radius=0.25,
+                obstacle_radius=0.25,
+                n=n,
+                tau=tau,
             )
-
-            grad_h = jax.grad(
-                h_as_function_of_robot_state
-            )(cbf_robot_state)
 
             class_k = class_K_function(
                 h_value,
-                gamma=100.0,
+                gamma=self.cbf_gamma,
                 beta=0,
             )
 
             # -------------------------------------------------
-            # Original constraint:
+            # CBF constraint, with h depending on p_obs - p and the
+            # obstacle moving at constant velocity:
             #
-            # -(grad_h F x + grad_h G u + class_k) <= 0
+            # L_f h = grad_h[:2] (v - v_obs),  L_g h = grad_h[2:]
             #
-            # Equivalent CBF form:
-            #
-            # grad_h G u >= -(grad_h F x + class_k)
+            # L_g h u >= -(L_f h + class_k)
             #
             # OSQP representation:
             #
             # lower_i <= control_row @ u <= +inf
             # -------------------------------------------------
             control_row = np.asarray(
-                grad_h @ G,
+                grad_h[2:],
                 dtype=float,
             ).reshape(n_vars)
 
             drift_and_class_k = float(
-                grad_h @ F @ cbf_robot_state
+                grad_h[:2] @ (v0 - v_obs)
                 + class_k
             )
 
@@ -922,9 +836,6 @@ class ControllerNode(Node):
         # Hard obstacle constraints
         # recall: NLopt inequality convention:
         #     g(u) <= 0
-        A = jnp.array(((0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0, 1.0), (0.0, 0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0)))
-        G = jnp.array(((0.0, 0.0), (0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
-
         # self.get_logger().info(f"{obstacles_states.values()}")
         self.get_logger().info(
             f"Received obstacles_states: "
@@ -942,56 +853,39 @@ class ControllerNode(Node):
             p_obs = np.asarray(obstacle_state["position"], dtype=float)
             v_obs = np.asarray(obstacle_state["velocity"], dtype=float)
 
-            if np.linalg.norm(p0 - p_obs) <= 0.5:
-                continue
-
-            cbf_robot_state = jnp.asarray(
-                np.concatenate((p0, v0)),
-                dtype=float,
-            )
-
-            cbf_obstacle_state = jnp.asarray(
-                np.concatenate((p_obs, v_obs)),
-                dtype=float,
-            )
+            # The constraint is kept when overlapping: the CBF then only
+            # forbids approaching the obstacle
+            cbf_robot_state = np.concatenate((p0, v0))
+            cbf_obstacle_state = np.concatenate((p_obs, v_obs))
 
             n = 6
             tau = 1.2
 
-            def h_as_function_of_robot_state(
-                x,
+            _, _, _, h_value, grad_h = compute_and_eval_h_and_grad(
+                robot_state=cbf_robot_state,
                 obstacle_state=cbf_obstacle_state,
-                n_i=n,
-                tau_i=tau,
-            ):
-                return compute_candidate_h(
-                    x,
-                    obstacle_state,
-                    0.25,
-                    0.25,
-                    n_i,
-                    tau_i,
-                )
-
-            gradH = jax.grad(h_as_function_of_robot_state)
+                robot_radius=0.25,
+                obstacle_radius=0.25,
+                n=n,
+                tau=tau,
+            )
 
             class_k = class_K_function(
-                h_as_function_of_robot_state(cbf_robot_state),
-                gamma=100.0,
+                h_value,
+                gamma=self.cbf_gamma,
                 beta=0,
             )
 
-            grad_h = gradH(cbf_robot_state)
-
+            # L_f h = grad_h[:2] (v - v_obs),  L_g h = grad_h[2:]
             def grad_const(
                 u,
                 grad_h_i=grad_h,
-                robot_state_i=cbf_robot_state,
+                relative_velocity_i=v0 - v_obs,
                 class_k_i=class_k,
             ):
                 return -(
-                    grad_h_i @ A @ robot_state_i
-                    + grad_h_i @ G @ u
+                    grad_h_i[:2] @ relative_velocity_i
+                    + grad_h_i[2:] @ u
                     + class_k_i
                 )
 
@@ -999,14 +893,14 @@ class ControllerNode(Node):
                 u,
                 grad_h_i=grad_h,
             ):
-                return - grad_h_i @ G
+                return - grad_h_i[2:]
 
             self.get_logger().info(
                 f"ob {obstacle_name} "
                 f"(pos: {p_obs}, vel: {v_obs}) "
                 f"for u_ref({u_ref}): "
-                f"{float(grad_const(jnp.asarray(u_ref))):.6f} <= 0 "
-                f"({np.asarray(gradgrad_const(jnp.asarray(u_ref)))})"
+                f"{float(grad_const(u_ref)):.6f} <= 0 "
+                f"({np.asarray(gradgrad_const(u_ref))})"
             )
 
             def constraint(
@@ -1016,13 +910,11 @@ class ControllerNode(Node):
                 gradient_function=gradgrad_const,
                 obstacle_name_i=obstacle_name,
             ):
-                u_jax = jnp.asarray(u)
-
-                value = value_function(u_jax)
+                value = value_function(u)
 
                 if grad.size > 0:
                     grad[:] = np.asarray(
-                        gradient_function(u_jax),
+                        gradient_function(u),
                         dtype=float,
                     )
 

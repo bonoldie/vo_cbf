@@ -3,10 +3,14 @@ import numpy as np
 import mujoco
 import mujoco.viewer
 
-from generate_scenarios import buildModel, format_obstacles
+from generate_scenarios import buildModel
 from utils.playback import Playback
 from utils.scenebuilder import ObstacleType
-from utils.utils import *
+from utils.utils import (
+    draw_vector,
+    rotation_matrix,
+    vee
+)
 from controllers.qp_3d_precomp_drone import QP3DPrecompDrone
 
 

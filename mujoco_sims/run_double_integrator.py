@@ -1,15 +1,12 @@
 import time
-import csv
 import numpy as np
 import mujoco
 import mujoco.viewer
-import mediapy as media
 from pathlib import Path
 import cv2 as cv2
 import os
 
 from generate_scenarios import buildModel, format_obstacles
-from utils.playback import Playback
 from utils.scenebuilder import ObstacleType
 from utils.utils import (
     draw_sphere,

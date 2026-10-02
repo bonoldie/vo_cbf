@@ -1,8 +1,6 @@
 import os
-import csv
 import numpy as np
 import mujoco
-import mujoco.viewer
 from  utils.scenebuilder import SceneBuilder
 from  utils.robotimporter import RobotImporter, resolve_robot_ids
 
