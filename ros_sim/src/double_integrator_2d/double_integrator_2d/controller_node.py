@@ -64,6 +64,10 @@ class ControllerNode(Node):
         self.max_accel = float(self.get_parameter("max_accel").value)
         self.declare_parameter("reference_speed", 0.5)
         self.reference_speed = float(self.get_parameter("reference_speed").value)
+
+        # Gain of the linear class-K function of the CBF [1/s]
+        self.declare_parameter("cbf_gamma", 100.0)
+        self.cbf_gamma = float(self.get_parameter("cbf_gamma").value)
         
         # NLopt params
         self.declare_parameter("nlopt_maxeval", 120)
@@ -625,7 +629,7 @@ class ControllerNode(Node):
 
             class_k = class_K_function(
                 h_value,
-                gamma=100.0,
+                gamma=self.cbf_gamma,
                 beta=0,
             )
 
@@ -868,7 +872,7 @@ class ControllerNode(Node):
 
             class_k = class_K_function(
                 h_value,
-                gamma=100.0,
+                gamma=self.cbf_gamma,
                 beta=0,
             )
 

@@ -1,4 +1,5 @@
-from .sh_cbf_core import compute_and_eval_h_and_grad, class_K_function
+from .cbf_fallback import solve_least_violation
+from .sh_cbf_core import compute_and_eval_h_and_grad_batch, class_K_function
 import scipy.sparse as sparse
 import osqp
 import time
@@ -23,6 +24,7 @@ class QP3DPrecomp:
         initial_state=np.zeros(6),
         sh_n=6,
         sh_tau=1.2,
+        cbf_gamma=100.0,
         collision_radius=0.5,
         obstacles=[],
         radius_tollerance = 0.01,
@@ -36,6 +38,9 @@ class QP3DPrecomp:
 
         self.sh_n = sh_n
         self.sh_tau = sh_tau
+
+        # Gain of the linear class-K function alpha(h) = cbf_gamma * h [1/s]
+        self.cbf_gamma = cbf_gamma
         self.collision_radius = collision_radius
         self.radius_tollerance = radius_tollerance
 
@@ -147,43 +152,52 @@ class QP3DPrecomp:
         # -------------------------------------------------
         # Recall: obstacle structure
         #   { obstacle_name: {collision_radius: 0.1, p: [px, py,pz], v:[vx, vy, vz]}}
-        for obstacle_name, obstacle in self.obstacles.items():
-            obstacle_distance = np.linalg.norm(self.state[:3] - obstacle['p'])
+        obstacle_names = list(self.obstacles.keys())
 
-            # The constraint is kept when overlapping: the CBF then only
-            # forbids approaching the obstacle (see compute_and_eval_h_and_grad)
-            if obstacle_distance <= (self.collision_radius + obstacle['collision_radius']):
+        if obstacle_names:
+            obstacle_states = np.array([
+                np.concatenate((obstacle['p'], obstacle['v']))
+                for obstacle in self.obstacles.values()
+            ], dtype=float)
+
+            obstacle_radii = np.array([
+                obstacle['collision_radius']
+                for obstacle in self.obstacles.values()
+            ], dtype=float)
+
+            # The constraints are kept when overlapping: the CBF then only
+            # forbids approaching the obstacle (see compute_and_eval_h_and_grad_batch)
+            obstacle_distances = np.linalg.norm(obstacle_states[:, :3] - self.state[:3], axis=1)
+
+            for index in np.flatnonzero(obstacle_distances <= self.collision_radius + obstacle_radii):
                 print(
-                    f"Overlapping {obstacle_name}: "
-                    f"distance={obstacle_distance:.3f}"
+                    f"Overlapping {obstacle_names[index]}: "
+                    f"distance={obstacle_distances[index]:.3f}"
                 )
 
-            cbf_obstacle_state = np.asarray(
-                np.concatenate((obstacle['p'], obstacle['v'])),
-                dtype=float,
-            )
-
-            b, a, vy_tan, h_value, grad_h_value = compute_and_eval_h_and_grad(
+            # CBFs of all the obstacles at once
+            b, a, _, h_values, grad_h_values = compute_and_eval_h_and_grad_batch(
                 robot_state=self.state,
-                obstacle_state=cbf_obstacle_state,
+                obstacle_states=obstacle_states,
                 robot_radius=self.collision_radius + self.radius_tollerance,
-                obstacle_radius=obstacle['collision_radius'],
+                obstacle_radii=obstacle_radii,
                 n=self.sh_n,
-                tau=self.sh_tau
+                tau=self.sh_tau,
             )
 
-            obstacles_boundaries[obstacle_name] = {
-                "a": a,
-                "b": b,
-                "h_value": h_value, 
-                "grad_h_value": grad_h_value
-            }
+            for index, obstacle_name in enumerate(obstacle_names):
+                obstacles_boundaries[obstacle_name] = {
+                    "a": a[index],
+                    "b": b[index],
+                    "h_value": h_values[index],
+                    "grad_h_value": grad_h_values[index],
+                }
 
-            class_k = class_K_function(h_value, gamma=100.0, beta=0)
+            class_k = class_K_function(h_values, gamma=self.cbf_gamma, beta=0)
 
             # -------------------------------------------------
-            # CBF constraint, with h depending on p_B - p_A and the
-            # obstacle moving at constant velocity:
+            # CBF constraints, with h depending on p_B - p_A and the
+            # obstacles moving at constant velocity:
             #
             # L_f h = grad_h[:3] (v_A - v_B),  L_g h = grad_h G
             #
@@ -193,30 +207,20 @@ class QP3DPrecomp:
             #
             # lower_i <= control_row @ u <= +inf
             # -------------------------------------------------
-            control_row = np.asarray(grad_h_value @ self.G, dtype=float).reshape(3)
+            control_rows = grad_h_values @ self.G
 
-            relative_velocity = self.state[3:] - obstacle['v']
+            relative_velocities = self.state[3:] - obstacle_states[:, 3:]
 
-            drift_and_class_k = float(grad_h_value[:3] @ relative_velocity + class_k)
+            drift_and_class_k = (
+                np.einsum("ij,ij->i", grad_h_values[:, :3], relative_velocities)
+                + class_k
+            )
 
-            cbf_lower_bound = -drift_and_class_k
+            constraint_rows.extend(control_rows)
+            constraint_lower_bounds.extend(-drift_and_class_k)
+            constraint_upper_bounds.extend([np.inf] * len(obstacle_names))
 
-            constraint_rows.append(control_row)
-            constraint_lower_bounds.append(cbf_lower_bound)
-            constraint_upper_bounds.append(np.inf)
-
-            active_constraints += 1
-
-            # cbf_at_reference = (drift_and_class_k + control_row @ acc_ref)
-            # if self.step % 80 == 0:
-            #     print(
-            #         f"ob {obstacle_name} "
-            #         f"(pos={obstacle['p']}, vel={obstacle['v']}) "
-            #         f"h={float(h_value):.6f}, "
-            #         f"CBF(u_ref)={cbf_at_reference:.6f} >= 0, "
-            #         f"row={control_row}, "
-            #         f"lower={cbf_lower_bound:.6f}"
-            #     )
+            active_constraints += len(obstacle_names)
 
         # print(f"Building constraints took {time.time() - constraint_start_time: 6.3f}s")
 
@@ -261,15 +265,16 @@ class QP3DPrecomp:
         results = solver.solve()
         status = results.info.status.lower()
 
-        if (
-            results.x is not None
-            and status.startswith("solved")
-        ):
-            u_star = np.asarray(
-                results.x,
-                dtype=float,
-            )
+        u_star = None
 
+        if status.startswith("primal infeasible"):
+            # The CBF constraints cannot be satisfied together within the input
+            # bounds: apply the input that violates them the least
+            u_star = solve_least_violation(acc_ref, np.vstack(constraint_rows), lower, upper, n_bounds=3)
+        elif results.x is not None:
+            u_star = np.asarray(results.x, dtype=float)
+
+        if u_star is not None:
             self.previous_solution = u_star.copy()
             self.cmd_accel = u_star.copy()
         else:
