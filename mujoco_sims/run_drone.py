@@ -366,7 +366,7 @@ try:
         controller = QP3DPrecompDrone(
             dt=DT,
             mass=mass,
-            inertia=sim_world_to_control_world @ np.diag(inertia),
+            # inertia=sim_world_to_control_world @ np.diag(inertia),
             target=sim_world_to_control_world @ target,
             initial_state=initial_state,
             collision_radius=collision_radius,

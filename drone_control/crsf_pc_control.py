@@ -18,7 +18,7 @@ import serial
 # --------------------------------------------------------------------------
 # Configuration
 # --------------------------------------------------------------------------
-PORT = "/dev/ttyACM1"
+PORT = "/dev/ttyACM0"
 BAUD = 115200          # Only matters for real UARTs / ST-Link VCP. For native USB CDC
                        # the STM32's UART setting toward the TX module is what counts.
 DEFAULT_RATE_HZ = 100  # Used until the TX module reports its packet rate
