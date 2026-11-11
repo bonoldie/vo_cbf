@@ -16,7 +16,7 @@ the obstacles and rendered to data/crossing_video/:
 With --side-by-side and several cases, the videos are also stacked side by side.
 With --snapshots, the 3D view at the given times is also saved as a PNG, without
 the texts and cropped to the sphere, with the velocity space of the panel in a
-.mat file (for data/sweep/paperFigures.m).
+.mat file (for paper/paperFigures.m).
 With --speed k, the agent and the obstacles are k times faster than in the
 studies of run_sweep.py, on the same layout of the obstacles. The background is
 white, or black with --background black.
