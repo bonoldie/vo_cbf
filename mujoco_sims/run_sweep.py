@@ -16,7 +16,7 @@ Studies:
               scaled together, on the same layouts at a fixed horizon
 
 Each run saves its raw logs to data/sweep/<study>/<run_id>.mat. The analysis is
-done in MATLAB (data/sweep/analyzeCrossing.m and data/sweep/analyzeSpeed.m).
+done in MATLAB (analysis/analyzeCrossing.m and analysis/analyzeSpeed.m).
 
 Usage:
     python run_sweep.py [crossing|speed|all] [--workers W] [--overwrite]
